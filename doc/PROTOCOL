@@ -1,0 +1,262 @@
+==============================================================
+=/            V P O R T   W I R E   P R O T O C O L         \=
+==============================================================
+
+                       Version 0 (draft)
+
+
+--[ 1. OVERVIEW ]----------------------------------------------
+
+A client talks to vportd over a Unix domain socket
+(SOCK_STREAM). Messages flow as a continuous byte stream; each
+message is one frame made of an 8 byte header followed by a
+payload whose size is fixed by the opcode.
+
+All integers are little-endian. There is no padding.
+
+
+--[ 2. HEADER ]------------------------------------------------
+
+   0               2               4                       8
+   +---------------+---------------+-----------------------+
+   |    opcode     |     flags     |      payload_len      |
+   |      u16      |      u16      |          u32          |
+   +---------------+---------------+-----------------------+
+
+  opcode       identifies the message, see section 4.
+  flags        reserved, must be 0.
+  payload_len  size of the payload in bytes. It must match the
+               size defined for the opcode and must never
+               exceed 1 MiB (1048576).
+
+
+--[ 3. SESSION ]-----------------------------------------------
+
+  1. The client connects to the socket.
+  2. The client sends Hello with the version it speaks.
+  3. The server answers Hello with the version it accepts.
+  4. The client may then create portals and draw.
+
+  Any message sent before Hello is a protocol violation. A
+  second Hello is a protocol violation. A version mismatch
+  closes the connection.
+
+  The server reads the credentials of the peer (pid, uid, gid)
+  from the kernel when the connection is accepted. These are
+  never taken from the protocol.
+
+
+--[ 4. MESSAGES ]----------------------------------------------
+
+  Opcode  Name             Direction          Payload size
+  ------  -----------      ---------------    ------------
+  0x0001  Hello            both                4
+  0x0010  InitPortal       client -> server   12
+  0x0011  ClosePortal      client -> server    4
+  0x0020  DrawRect         client -> server   16
+  0x0040  Commit           client -> server    4
+  0x0050  GrabKeyboard     client -> server    4
+  0x0051  ReleaseKeyboard  client -> server    4
+  0x8001  KeyEvent         server -> client   10
+  0x8002  PointerButton    server -> client   10
+  0x8003  FocusChanged     server -> client    5
+  0x8004  GrabStatus       server -> client    5
+
+
+  Hello (0x0001)
+
+      +---------------+---------------+
+      |    version    | capabilities  |
+      |      u16      |      u16      |
+      +---------------+---------------+
+
+      version       protocol version, currently 1.
+      capabilities  reserved, must be 0.
+
+
+  InitPortal (0x0010)
+
+      +-------------------------------+
+      |           portal_id           |
+      |              u32              |
+      +---------------+---------------+
+      |       x       |       y       |
+      |      i16      |      i16      |
+      +---------------+---------------+
+      |       w       |       h       |
+      |      u16      |      u16      |
+      +---------------+---------------+
+
+      Creates a portal owned by the calling client. The id is
+      chosen by the client and must be unused.
+
+
+  ClosePortal (0x0011)
+
+      +-------------------------------+
+      |           portal_id           |
+      |              u32              |
+      +-------------------------------+
+
+      Destroys a portal and everything drawn in it.
+
+
+  DrawRect (0x0020)
+
+      +-------------------------------+
+      |           portal_id           |
+      |              u32              |
+      +---------------+---------------+
+      |       x       |       y       |
+      |      i16      |      i16      |
+      +---------------+---------------+
+      |       w       |       h       |
+      |      u16      |      u16      |
+      +---------------+---------------+
+      |             rgba              |
+      |              u32              |
+      +-------------------------------+
+
+      Queues a filled rectangle, relative to the portal.
+      Colour is 0xRRGGBBAA. Nothing is shown until Commit.
+
+
+  Commit (0x0040)
+
+      +-------------------------------+
+      |           portal_id           |
+      |              u32              |
+      +-------------------------------+
+
+      Atomically replaces the visible frame of the portal with
+      all commands queued since the previous Commit.
+
+  GrabKeyboard (0x0050) and ReleaseKeyboard (0x0051)
+
+      +-------------------------------+
+      |           portal_id           |
+      |              u32              |
+      +-------------------------------+
+
+
+  KeyEvent (0x8001)
+
+      +-------------------------------+
+      |           portal_id           |
+      |              u32              |
+      +---------------+---------------+
+      |   scancode    |   modifiers   |
+      |      u16      |      u16      |
+      +-------+-------+---------------+
+      |pressed| repeat|
+      |  u8   |  u8   |
+      +-------+-------+
+
+      scancode is a USB HID usage id (usage page 0x07), so it
+      does not depend on the keyboard layout. Modifier bits:
+      0x0001 shift, 0x0002 ctrl, 0x0004 alt.
+
+
+  PointerButton (0x8002)
+
+      +-------------------------------+
+      |           portal_id           |
+      |              u32              |
+      +---------------+---------------+
+      |       x       |       y       |
+      |      i16      |      i16      |
+      +-------+-------+
+      |button |pressed|
+      |  u8   |  u8   |
+      +-------+-------+
+
+      x and y are relative to the portal. Buttons: 1 left,
+      2 middle, 3 right, 4 and 5 extra.
+
+
+  FocusChanged (0x8003)
+
+      +-------------------------------+-------+
+      |           portal_id           |focused|
+      |              u32              |  u8   |
+      +-------------------------------+-------+
+
+
+  GrabStatus (0x8004)
+
+      +-------------------------------+-------+
+      |           portal_id           | status|
+      |              u32              |  u8   |
+      +-------------------------------+-------+
+
+      status: 0 denied, 1 granted, 2 released.
+
+  Stacking order: portals are drawn in the order their clients
+  connected and, inside one client, by ascending portal_id.
+  Rectangles are clipped to the bounds of their portal and to
+  the screen.
+
+
+--[ 5. INPUT, FOCUS AND KEYBOARD GRAB ]-----------------------
+
+  Focus. At most one portal has keyboard focus. A new portal
+  takes focus unless a keyboard grab is held. A pointer button
+  press inside a portal gives it focus, unless a grab is held.
+  When the focused portal goes away, the topmost remaining
+  portal takes focus. The old and the new owner are told with
+  FocusChanged.
+
+  Pointer events. PointerButton goes to the topmost portal
+  under the pointer. A keyboard grab does not affect it.
+
+  Keyboard grab. A client asks for exclusive keyboard input
+  with GrabKeyboard and the server answers with GrabStatus.
+  The rules are strict:
+
+    - The uid of the peer, read from the kernel with
+      SO_PEERCRED, must be in the grab policy. By default the
+      policy is uid 0 and the uid vportd runs as. The
+      environment variable VPORT_GRAB_UIDS (comma separated
+      uids) replaces that list.
+    - Only one grab exists at a time. A second request is
+      denied; a grab is never taken away from its holder.
+
+  While a grab is held, all keyboard events go to the portal
+  of the holder, which also gets focus. The grab ends with
+  ReleaseKeyboard, when the portal is closed, or when the
+  client disconnects.
+
+  A client that sends a server-only message (opcode 0x8000 or
+  higher) is disconnected.
+
+
+--[ 6. LIMITS ]------------------------------------------------
+
+  Maximum payload size                  1 MiB
+  Maximum clients                          64
+  Maximum portals per client                8
+  Maximum uncommitted rectangles per portal 4096
+
+
+--[ 7. ERRORS ]------------------------------------------------
+
+  The server does not send error messages. A client that
+  breaks the protocol is disconnected, and the reason is
+  written to the server log. Causes include:
+
+      - unknown opcode
+      - payload size different from the one the opcode needs
+      - payload larger than the maximum
+      - message before Hello, or Hello twice
+      - unsupported protocol version
+      - unknown portal id, or portal id already in use
+      - any limit in section 5 exceeded
+
+
+--[ 8. PLANNED ]-----------------------------------------------
+
+  ShowText, StreamBuffer and server to client Event messages
+  (input, focus, portal closed) are not part of version 0.
+
+
+==============================================================

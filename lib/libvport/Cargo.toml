@@ -1,0 +1,7 @@
+[package]
+name = "libvport"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vport-proto = { path = "../vport-proto" }

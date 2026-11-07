@@ -1,0 +1,6 @@
+[package]
+name = "vport-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

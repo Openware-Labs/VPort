@@ -1,0 +1,13 @@
+[package]
+name = "vportd"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+sdl2 = ["dep:sdl2"]
+
+[dependencies]
+vport-proto = { path = "../../lib/vport-proto" }
+libc = "0.2"
+sdl2 = { version = "0.38", optional = true }

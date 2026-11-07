@@ -1,0 +1,75 @@
+==============================================================
+=/                 C O N T R I B U T I N G                  \=
+==============================================================
+
+
+--[ 1. BEFORE YOU START ]--------------------------------------
+
+VPort is deliberately small. A change that makes the server
+bigger, slower or less predictable needs a very good reason.
+If you plan something large, describe it to the maintainers
+(see CREDITS) before writing the code.
+
+
+--[ 2. CODE RULES ]--------------------------------------------
+
+  Language   All code, program messages, error messages and
+             commit messages are written in English.
+
+  Comments   Source code is kept free of comments. Names must
+             carry the meaning. Explanations belong in doc/
+             and in commit messages.
+
+  Style      Run "cargo fmt" before committing. The tree must
+             build without warnings.
+
+  Tests      Run "cargo test". New protocol behaviour comes
+             with a test in vport-proto.
+
+  Unsafe     Allowed only for system calls, kept in small
+             wrappers, never in protocol parsing.
+
+  Memory     Every resource a client can cause the server to
+             allocate must have a hard limit.
+
+  Deps       No async runtime. New dependencies need a clear
+             justification; today vportd uses only libc, plus
+             sdl2 behind an optional feature.
+
+
+--[ 3. PROTOCOL CHANGES ]--------------------------------------
+
+  The wire protocol is documented in doc/PROTOCOL. A change to
+  an opcode, a payload layout or a limit must update that file
+  in the same commit, and must bump PROTOCOL_VERSION when it
+  is not backward compatible.
+
+  The server must treat every byte from a client as hostile.
+  A malformed frame disconnects that client and nothing else.
+
+
+--[ 4. COMMITS ]-----------------------------------------------
+
+  One logical change per commit. Subject line in English, in
+  the imperative, up to 72 characters, with a prefix:
+
+      feat:      new functionality
+      fix:       bug fix
+      refactor:  change without behaviour difference
+      docs:      documentation only
+      test:      tests only
+      build:     Cargo and build system
+
+  Example:
+
+      feat: add in-memory backend with PPM dump
+
+
+--[ 5. SENDING PATCHES AND BUG REPORTS ]-----------------------
+
+  Send them to the developers listed in CREDITS. For a bug,
+  include the vportd log, the client code that triggers it and
+  the output of "uname -a".
+
+
+==============================================================
