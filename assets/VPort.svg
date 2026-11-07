@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   version="1.1"
+   width="275"
+   height="275"
+   id="svg2"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs4">
+    <linearGradient
+       id="linearGradient1">
+      <stop
+         style="stop-color:#0000ff;stop-opacity:1;"
+         offset="0"
+         id="stop1" />
+      <stop
+         style="stop-color:#00ffff;stop-opacity:1"
+         offset="1"
+         id="stop2" />
+    </linearGradient>
+    <linearGradient
+       id="linearGradient21">
+      <stop
+         style="stop-color:#00fbfe;stop-opacity:1;"
+         offset="0"
+         id="stop21" />
+      <stop
+         style="stop-color:#000000;stop-opacity:0;"
+         offset="1"
+         id="stop22" />
+    </linearGradient>
+    <rect
+       x="80.097087"
+       y="115.87379"
+       width="19.223301"
+       height="23.495146"
+       id="rect17" />
+    <linearGradient
+       xlink:href="#linearGradient1"
+       id="linearGradient2"
+       x1="204.12372"
+       y1="40.824741"
+       x2="37.42268"
+       y2="343.60825"
+       gradientUnits="userSpaceOnUse"
+       gradientTransform="matrix(1.1940854,0,0,1.1940854,-26.686758,-26.686754)" />
+  </defs>
+  <text
+     xml:space="preserve"
+     style="writing-mode:lr-tb;direction:ltr;fill:#000000"
+     x="60.339806"
+     y="132.42719"
+     id="text9"><tspan
+       id="tspan9"
+       x="60.339806"
+       y="132.42719" /></text>
+  <text
+     xml:space="preserve"
+     id="text17"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:Monospace;-inkscape-font-specification:Monospace;writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect17);display:inline;fill:#ffffff" />
+  <path
+     d="m 256.96139,22.114948 v 6.156088 q -11.97941,2.16295 -18.13551,7.653516 -8.81818,8.152656 -15.63979,24.957113 l -78.6981,192.003385 h -6.15608 L 53.810474,58.385954 Q 47.321624,43.411685 44.659532,40.084071 40.500014,34.926266 34.343924,32.097794 28.354217,29.102941 18.038612,28.271036 v -6.156088 h 92.174948 v 6.156088 q -15.639807,1.497426 -20.298461,5.324184 -4.658661,3.826758 -4.658661,9.816465 0,8.319037 7.653515,25.955397 L 150.31132,201.63978 203.55317,71.030901 q 7.81989,-19.300179 7.81989,-26.787312 0,-4.825041 -4.82503,-9.150942 -4.82506,-4.49228 -16.30533,-6.322469 -0.83191,-0.166379 -2.82847,-0.499142 v -6.156088 z"
+     id="text1"
+     style="font-size:192px;font-family:'Times New Roman';-inkscape-font-specification:'Times New Roman, ';fill:url(#linearGradient2);fill-opacity:1;stroke:#000000;stroke-width:5.26917;stroke-linecap:square"
+     aria-label="V" />
+</svg>
