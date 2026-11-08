@@ -6,6 +6,7 @@ members = ["protocol/vport-proto", "lib/libvport", "programs/vportd", "programs/
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/Openware-Labs/VPort"
 
 [profile.release]
 opt-level = 3

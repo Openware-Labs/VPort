@@ -3,5 +3,10 @@ name = "vport-proto"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Wire protocol definitions for VPort, a tiny display protocol for embedded and point-of-sale Linux systems"
+readme = "README"
+keywords = ["display", "protocol", "embedded", "kiosk", "wire-format"]
+categories = ["graphics", "embedded", "network-programming"]
 
 [dependencies]

@@ -3,6 +3,9 @@
 // Copyright 2026-present (C) Openware Labs
 // Code Author(s): Openware Labs developers
 
+#![forbid(unsafe_code)]
+#![doc = include_str!("../README")]
+
 use std::fmt;
 
 pub const PROTOCOL_VERSION: u16 = 1;

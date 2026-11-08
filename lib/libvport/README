@@ -1,0 +1,42 @@
+```text
+==============================================================
+=/                     L I B V P O R T                      \=
+==============================================================
+
+       Reference client library for the VPort protocol
+
+
+  VPort is a tiny display protocol for embedded and
+  point-of-sale Linux systems. A client talks to a display
+  server over a Unix socket and the server draws in an
+  isolated portal. libvport is the reference client library.
+
+  STATUS: early release. The protocol is a draft and can
+  change in any 0.x version. libvport does not speak TLS yet,
+  so it only talks to a server on the same machine through
+  the Unix socket.
+
+  The specification and the reference server (vportd) are in
+  the VPort repository linked from this crate.
+
+
+--[ EXAMPLE ]-------------------------------------------------
+
+  use libvport::Connection;
+
+  fn main() -> std::io::Result<()> {
+      let mut conn = Connection::connect_default()?;
+      conn.init_portal(1, 100, 100, 640, 360)?;
+      conn.draw_rect(1, 0, 0, 640, 360, 0x202020ff)?;
+      conn.show_text(1, 20, 20, 48, 0xffffffff, "Hello")?;
+      conn.commit(1)?;
+      conn.wait_event()?;
+      Ok(())
+  }
+
+  connect_default reads the socket path from VPORT_SOCKET and
+  falls back to /run/vport/vport.sock.
+
+
+==============================================================
+```

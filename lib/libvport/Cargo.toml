@@ -2,9 +2,16 @@
 name = "libvport"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reference client library for VPort, a tiny display protocol for embedded and point-of-sale Linux systems"
+readme = "README"
+keywords = ["display", "protocol", "embedded", "kiosk", "client"]
+categories = ["graphics", "embedded", "os::unix-apis"]
+exclude = ["examples"]
 
 [dependencies]
-vport-proto = { path = "../../protocol/vport-proto" }
+vport-proto = { version = "0.1.0", path = "../../protocol/vport-proto" }
 
 [dev-dependencies]
 resvg = "0.45"
