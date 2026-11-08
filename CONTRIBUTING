@@ -17,8 +17,7 @@ If you plan something large, describe it to the maintainers
              commit messages are written in English.
 
   Comments   Source code is kept free of comments. Names must
-             carry the meaning. Explanations belong in doc/
-             and in commit messages.
+             carry the meaning.
 
   Style      Run "cargo fmt" before committing. The tree must
              build without warnings.
