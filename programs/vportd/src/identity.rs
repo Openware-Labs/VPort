@@ -24,8 +24,8 @@ impl fmt::Display for Identity {
 
 pub fn valid_remote_name(name: &str) -> bool {
     !name.is_empty()
-    && name.len() <= MAX_IDENTITY_BYTES
-    && name.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+        && name.len() <= MAX_IDENTITY_BYTES
+        && name.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
 }
 
 #[cfg(test)]

@@ -82,7 +82,7 @@ fn read_tcp(
         Ok(0) => Ok(Step::Closed),
         Ok(_) => {
             conn.process_new_packets()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
             loop {
                 match conn.reader().read(chunk) {
                     Ok(0) => return Ok(Step::Closed),

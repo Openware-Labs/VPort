@@ -69,16 +69,16 @@ fn required_env(name: &str) -> Result<String, String> {
 
 fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
     CertificateDer::pem_file_iter(path)
-    .map_err(|e| format!("cannot read {path}: {e}"))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|e| format!("invalid certificate in {path}: {e}"))
+        .map_err(|e| format!("cannot read {path}: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("invalid certificate in {path}: {e}"))
 }
 
 fn load_tls(cert_path: &str, key_path: &str, ca_path: &str) -> Result<Arc<ServerConfig>, String> {
     let mode = fs::metadata(key_path)
-    .map_err(|e| format!("cannot read {key_path}: {e}"))?
-    .permissions()
-    .mode();
+        .map_err(|e| format!("cannot read {key_path}: {e}"))?
+        .permissions()
+        .mode();
     if mode & 0o077 != 0 {
         return Err(format!(
             "{key_path} must not be accessible by group or others"
@@ -87,23 +87,23 @@ fn load_tls(cert_path: &str, key_path: &str, ca_path: &str) -> Result<Arc<Server
 
     let certs = load_certs(cert_path)?;
     let key = PrivateKeyDer::from_pem_file(key_path)
-    .map_err(|e| format!("invalid key in {key_path}: {e}"))?;
+        .map_err(|e| format!("invalid key in {key_path}: {e}"))?;
 
     let mut roots = RootCertStore::empty();
     for ca in load_certs(ca_path)? {
         roots
-        .add(ca)
-        .map_err(|e| format!("invalid CA certificate in {ca_path}: {e}"))?;
+            .add(ca)
+            .map_err(|e| format!("invalid CA certificate in {ca_path}: {e}"))?;
     }
 
     let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
-    .build()
-    .map_err(|e| format!("cannot build the client verifier: {e}"))?;
+        .build()
+        .map_err(|e| format!("cannot build the client verifier: {e}"))?;
 
     let mut config = ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
-    .with_client_cert_verifier(verifier)
-    .with_single_cert(certs, key)
-    .map_err(|e| format!("invalid server certificate or key: {e}"))?;
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(certs, key)
+        .map_err(|e| format!("invalid server certificate or key: {e}"))?;
     config.send_tls13_tickets = 0;
     Ok(Arc::new(config))
 }
@@ -111,11 +111,11 @@ fn load_tls(cert_path: &str, key_path: &str, ca_path: &str) -> Result<Arc<Server
 fn load_allow_list(path: &Path) -> io::Result<Vec<String>> {
     let text = fs::read_to_string(path)?;
     Ok(text
-    .lines()
-    .map(str::trim)
-    .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    .map(str::to_string)
-    .collect())
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_string)
+        .collect())
 }
 
 fn set_socket_option(fd: RawFd, level: libc::c_int, name: libc::c_int, value: libc::c_int) {
@@ -139,7 +139,12 @@ fn set_socket_option(fd: RawFd, level: libc::c_int, name: libc::c_int, value: li
 fn set_keepalive(tcp: &TcpStream) {
     let fd = tcp.as_raw_fd();
     set_socket_option(fd, libc::SOL_SOCKET, libc::SO_KEEPALIVE, 1);
-    set_socket_option(fd, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, KEEPALIVE_IDLE_SECS);
+    set_socket_option(
+        fd,
+        libc::IPPROTO_TCP,
+        libc::TCP_KEEPIDLE,
+        KEEPALIVE_IDLE_SECS,
+    );
     set_socket_option(
         fd,
         libc::IPPROTO_TCP,
@@ -151,22 +156,22 @@ fn set_keepalive(tcp: &TcpStream) {
 
 fn peer_identity(conn: &ServerConnection) -> Result<String, String> {
     let certs = conn
-    .peer_certificates()
-    .ok_or("the client sent no certificate")?;
+        .peer_certificates()
+        .ok_or("the client sent no certificate")?;
     let leaf = certs.first().ok_or("the client sent no certificate")?;
     let (_, cert) = x509_parser::parse_x509_certificate(leaf.as_ref())
-    .map_err(|e| format!("unreadable client certificate: {e}"))?;
+        .map_err(|e| format!("unreadable client certificate: {e}"))?;
     let name = cert
-    .subject()
-    .iter_common_name()
-    .next()
-    .ok_or("the client certificate has no Common Name")?
-    .as_str()
-    .map_err(|e| format!("invalid Common Name: {e}"))?
-    .to_string();
+        .subject()
+        .iter_common_name()
+        .next()
+        .ok_or("the client certificate has no Common Name")?
+        .as_str()
+        .map_err(|e| format!("invalid Common Name: {e}"))?
+        .to_string();
     let valid = !name.is_empty()
-    && name.len() <= MAX_IDENTITY_BYTES
-    && name.bytes().all(|byte| (0x21..=0x7e).contains(&byte));
+        && name.len() <= MAX_IDENTITY_BYTES
+        && name.bytes().all(|byte| (0x21..=0x7e).contains(&byte));
     if !valid {
         return Err("the Common Name is not a valid identity".to_string());
     }
@@ -178,9 +183,9 @@ fn handshake(
     settings: &Settings,
 ) -> Result<(ServerConnection, TcpStream, String), String> {
     tcp.set_read_timeout(Some(HANDSHAKE_STEP_TIMEOUT))
-    .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
     tcp.set_write_timeout(Some(HANDSHAKE_STEP_TIMEOUT))
-    .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
     let _ = tcp.set_nodelay(true);
 
     let mut conn = ServerConnection::new(Arc::clone(&settings.tls)).map_err(|e| e.to_string())?;
@@ -190,12 +195,12 @@ fn handshake(
             return Err("handshake deadline exceeded".to_string());
         }
         conn.complete_io(&mut tcp)
-        .map_err(|e| format!("handshake failed: {e}"))?;
+            .map_err(|e| format!("handshake failed: {e}"))?;
     }
 
     let identity = peer_identity(&conn)?;
     let allowed = load_allow_list(&settings.allow_path)
-    .map_err(|e| format!("cannot read the allow list: {e}"))?;
+        .map_err(|e| format!("cannot read the allow list: {e}"))?;
     if !allowed.iter().any(|name| *name == identity) {
         return Err(format!("identity {identity} is not allowed"));
     }
@@ -217,9 +222,9 @@ fn connect_upstream(path: &Path, identity: &str) -> io::Result<UnixStream> {
 
 fn serve(tcp: TcpStream, settings: &Settings, handshake_slot: Slot) {
     let peer = tcp
-    .peer_addr()
-    .map(|addr| addr.to_string())
-    .unwrap_or_else(|_| "unknown".to_string());
+        .peer_addr()
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
 
     let (conn, tcp, identity) = match handshake(tcp, settings) {
         Ok(result) => result,
@@ -232,7 +237,7 @@ fn serve(tcp: TcpStream, settings: &Settings, handshake_slot: Slot) {
     eprintln!("vport-gateway: {peer} connected as {identity}");
 
     let result = connect_upstream(&settings.upstream, &identity)
-    .and_then(|upstream| relay::relay(conn, tcp, upstream));
+        .and_then(|upstream| relay::relay(conn, tcp, upstream));
     match result {
         Ok(()) => eprintln!("vport-gateway: {peer} ({identity}) disconnected"),
         Err(e) => eprintln!("vport-gateway: {peer} ({identity}) closed: {e}"),
@@ -251,7 +256,7 @@ fn run() -> Result<(), String> {
 
     let tls = load_tls(&cert, &key, &ca)?;
     let allowed = load_allow_list(&allow_path)
-    .map_err(|e| format!("cannot read {}: {e}", allow_path.display()))?;
+        .map_err(|e| format!("cannot read {}: {e}", allow_path.display()))?;
     if allowed.is_empty() {
         return Err(format!(
             "{} lists no identity, nobody could connect",
@@ -260,11 +265,11 @@ fn run() -> Result<(), String> {
     }
 
     let listener =
-    TcpListener::bind(&listen).map_err(|e| format!("cannot listen on {listen}: {e}"))?;
+        TcpListener::bind(&listen).map_err(|e| format!("cannot listen on {listen}: {e}"))?;
     eprintln!(
         "vport-gateway: listening on {listen}, {} identities allowed, upstream {}",
         allowed.len(),
-              upstream.display()
+        upstream.display()
     );
 
     let settings = Arc::new(Settings {
@@ -300,11 +305,11 @@ fn run() -> Result<(), String> {
         };
         let settings = Arc::clone(&settings);
         let spawned = thread::Builder::new()
-        .stack_size(THREAD_STACK_BYTES)
-        .spawn(move || {
-            serve(tcp, &settings, handshake_slot);
-            drop(connection_slot);
-        });
+            .stack_size(THREAD_STACK_BYTES)
+            .spawn(move || {
+                serve(tcp, &settings, handshake_slot);
+                drop(connection_slot);
+            });
         if let Err(e) = spawned {
             eprintln!("vport-gateway: could not start a worker: {e}");
         }

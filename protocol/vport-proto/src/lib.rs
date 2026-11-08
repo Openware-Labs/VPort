@@ -495,7 +495,7 @@ impl Message {
             }),
             Opcode::ProxyIdentity => {
                 let identity =
-                String::from_utf8(payload.to_vec()).map_err(|_| ProtoError::InvalidUtf8)?;
+                    String::from_utf8(payload.to_vec()).map_err(|_| ProtoError::InvalidUtf8)?;
                 Self::ProxyIdentity(ProxyIdentity { identity })
             }
             Opcode::InitPortal => Self::InitPortal(InitPortal {
@@ -825,7 +825,7 @@ mod tests {
             };
             assert!(matches!(
                 Message::decode(&header, &payload),
-                             Err(ProtoError::PayloadOutOfRange { .. })
+                Err(ProtoError::PayloadOutOfRange { .. })
             ));
         }
     }

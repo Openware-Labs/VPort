@@ -17,17 +17,17 @@ const MAX_SCANNED_FILES: usize = 4096;
 
 const FONT_ROOTS: [&str; 3] = [
     "/usr/share/fonts",
-"/usr/local/share/fonts",
-"/usr/share/X11/fonts",
+    "/usr/local/share/fonts",
+    "/usr/share/X11/fonts",
 ];
 
 const PREFERRED_FONTS: [&str; 6] = [
     "DejaVuSans.ttf",
-"NotoSans-Regular.ttf",
-"LiberationSans-Regular.ttf",
-"Roboto-Regular.ttf",
-"OpenSans-Regular.ttf",
-"Arial.ttf",
+    "NotoSans-Regular.ttf",
+    "LiberationSans-Regular.ttf",
+    "Roboto-Regular.ttf",
+    "OpenSans-Regular.ttf",
+    "Arial.ttf",
 ];
 
 struct Glyph {
@@ -66,9 +66,9 @@ impl TextRenderer {
         };
         let size = height as f32;
         let ascent = font
-        .horizontal_line_metrics(size)
-        .map(|metrics| metrics.ascent)
-        .unwrap_or(size * 0.8);
+            .horizontal_line_metrics(size)
+            .map(|metrics| metrics.ascent)
+            .unwrap_or(size * 0.8);
         let baseline = y + ascent.round() as i32;
         let color_alpha = rgba & 0xff;
         let rgb = (rgba >> 8) & 0x00ff_ffff;
@@ -98,13 +98,7 @@ impl TextRenderer {
                         continue;
                     }
                     let alpha = coverage * color_alpha / 255;
-                    framebuffer.blend_pixel(
-                        left + col as i32,
-                        top + row as i32,
-                        rgb,
-                        alpha,
-                        clip,
-                    );
+                    framebuffer.blend_pixel(left + col as i32, top + row as i32, rgb, alpha, clip);
                 }
             }
             pen += glyph.metrics.advance_width;
@@ -127,9 +121,9 @@ fn collect_fonts(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
         } else if path
             .extension()
             .map_or(false, |extension| extension.eq_ignore_ascii_case("ttf"))
-            {
-                found.push(path);
-            }
+        {
+            found.push(path);
+        }
     }
 }
 
@@ -147,8 +141,8 @@ fn font_candidates() -> Vec<PathBuf> {
 
     for name in PREFERRED_FONTS {
         let position = scanned
-        .iter()
-        .position(|path| path.file_name().map_or(false, |file| file == name));
+            .iter()
+            .position(|path| path.file_name().map_or(false, |file| file == name));
         if let Some(position) = position {
             candidates.push(scanned.remove(position));
         }

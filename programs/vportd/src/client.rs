@@ -54,24 +54,24 @@ pub struct Client {
 
 impl Client {
     pub fn new(stream: UnixStream, peer: PeerCred, via_gateway: bool) -> Self {
-    Self {
-        stream,
-        peer,
-        identity: Identity::Local { uid: peer.uid },
-        via_gateway,
-        identified: false,
-        inbuf: Vec::new(),
-        outbuf: Vec::new(),
-        greeted: false,
-        portals: BTreeMap::new(),
-        images: BTreeMap::new(),
-        image_bytes: 0,
-        dirty: false,
-        doomed: false,
-        write_armed: false,
-        requests: Vec::new(),
+        Self {
+            stream,
+            peer,
+            identity: Identity::Local { uid: peer.uid },
+            via_gateway,
+            identified: false,
+            inbuf: Vec::new(),
+            outbuf: Vec::new(),
+            greeted: false,
+            portals: BTreeMap::new(),
+            images: BTreeMap::new(),
+            image_bytes: 0,
+            dirty: false,
+            doomed: false,
+            write_armed: false,
+            requests: Vec::new(),
+        }
     }
-}
 
     pub fn peer(&self) -> PeerCred {
         self.peer

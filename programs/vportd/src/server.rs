@@ -75,7 +75,7 @@ impl Server {
                 eprintln!(
                     "vportd: gateway socket on {}, trusted gateway uids {:?}",
                     gateway_path.display(),
-                          gateway_uids
+                    gateway_uids
                 );
                 Some(gateway_listener)
             }
@@ -94,10 +94,10 @@ impl Server {
             gateway_uids,
             epoll,
             clients: BTreeMap::new(),
-           next_token: FIRST_CLIENT_TOKEN,
-           socket_paths,
-           compositor,
-           input,
+            next_token: FIRST_CLIENT_TOKEN,
+            socket_paths,
+            compositor,
+            input,
         })
     }
 
@@ -136,16 +136,14 @@ impl Server {
                         pressed,
                         repeat,
                     } => self
-                    .input
-                    .key(&mut self.clients, scancode, modifiers, pressed, repeat),
+                        .input
+                        .key(&mut self.clients, scancode, modifiers, pressed, repeat),
                     BackendEvent::Button {
                         x,
                         y,
                         button,
                         pressed,
-                    } => self
-                    .input
-                    .button(&mut self.clients, x, y, button, pressed),
+                    } => self.input.button(&mut self.clients, x, y, button, pressed),
                 }
             }
 
@@ -211,13 +209,13 @@ impl Server {
         }
         eprintln!(
             "vportd: client connected (pid {}, uid {}, gid {}{})",
-                  peer.pid,
-                  peer.uid,
-                  peer.gid,
-                  if via_gateway { ", via gateway" } else { "" }
+            peer.pid,
+            peer.uid,
+            peer.gid,
+            if via_gateway { ", via gateway" } else { "" }
         );
         self.clients
-        .insert(token, Client::new(stream, peer, via_gateway));
+            .insert(token, Client::new(stream, peer, via_gateway));
     }
 
     fn service_client(&mut self, event: Event) -> bool {
@@ -241,15 +239,15 @@ impl Server {
                 }
                 (
                     open && !event.hangup,
-                 client.take_dirty(),
-                 client.take_requests(),
+                    client.take_dirty(),
+                    client.take_requests(),
                 )
             }
             None => return false,
         };
         for request in requests {
             self.input
-            .handle_request(event.token, request, &mut self.clients);
+                .handle_request(event.token, request, &mut self.clients);
         }
         if !keep {
             dirty |= self.drop_client(event.token);
@@ -263,8 +261,8 @@ impl Server {
                 let _ = self.epoll.remove(client.raw_fd());
                 eprintln!(
                     "vportd: client disconnected (pid {}, {})",
-                          client.peer().pid,
-                          client.identity()
+                    client.peer().pid,
+                    client.identity()
                 );
                 let had_portals = client.has_portals();
                 self.input.client_gone(token, &mut self.clients);
@@ -278,11 +276,11 @@ impl Server {
         let mut dirty = false;
         loop {
             let doomed: Vec<u64> = self
-            .clients
-            .iter()
-            .filter(|(_, client)| client.is_doomed())
-            .map(|(token, _)| *token)
-            .collect();
+                .clients
+                .iter()
+                .filter(|(_, client)| client.is_doomed())
+                .map(|(token, _)| *token)
+                .collect();
             if doomed.is_empty() {
                 break;
             }
@@ -294,12 +292,12 @@ impl Server {
             let wanted = client.wants_write();
             if wanted != client.write_armed()
                 && self
-                .epoll
-                .set_writable(client.raw_fd(), *token, wanted)
-                .is_ok()
-                {
-                    client.set_write_armed(wanted);
-                }
+                    .epoll
+                    .set_writable(client.raw_fd(), *token, wanted)
+                    .is_ok()
+            {
+                client.set_write_armed(wanted);
+            }
         }
         dirty
     }
