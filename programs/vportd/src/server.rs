@@ -248,8 +248,8 @@ impl Server {
     }
 
     fn recompose(&mut self) {
-        let portals = self.clients.values().flat_map(|client| client.portals());
-        if let Err(e) = self.compositor.render(portals) {
+        let scenes = self.clients.values().flat_map(|client| client.scenes());
+        if let Err(e) = self.compositor.render(scenes) {
             eprintln!("vportd: render failed: {e}");
         }
     }

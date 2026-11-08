@@ -10,19 +10,21 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use vport_proto::{
-    frame_len, ClosePortal, Commit, DrawRect, GrabKeyboard, Header, Hello, InitPortal, Message,
-    ReleaseKeyboard, HEADER_SIZE, PROTOCOL_VERSION,
+    frame_len, ClosePortal, Commit, CreateImage, DestroyImage, DrawImage, DrawRect, GrabKeyboard,
+    Header, Hello, ImageData, InitPortal, Message, ReleaseKeyboard, ShowText, HEADER_SIZE,
+    IMAGE_FORMAT_RGBA8, PROTOCOL_VERSION,
 };
 
 pub use keys::hid_to_ascii;
 pub use vport_proto::{
     FocusChanged, GrabStatus, KeyEvent, PointerButton, GRAB_DENIED, GRAB_GRANTED, GRAB_RELEASED,
-    MOD_ALT, MOD_CTRL, MOD_SHIFT,
+    MAX_TEXT_BYTES, MOD_ALT, MOD_CTRL, MOD_SHIFT,
 };
 
 pub const DEFAULT_SOCKET: &str = "/run/vport/vport.sock";
 
 const RECV_CHUNK: usize = 512;
+const IMAGE_CHUNK: usize = 32 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -116,6 +118,83 @@ impl Connection {
             h,
             rgba,
         }))
+    }
+
+    pub fn draw_image(&mut self, portal_id: u32, image_id: u32, x: i16, y: i16) -> io::Result<()> {
+        self.send(&Message::DrawImage(DrawImage {
+            portal_id,
+            image_id,
+            x,
+            y,
+        }))
+    }
+
+    pub fn show_text(
+        &mut self,
+        portal_id: u32,
+        x: i16,
+        y: i16,
+        height: u16,
+        rgba: u32,
+        text: &str,
+    ) -> io::Result<()> {
+        if text.is_empty() || text.len() > MAX_TEXT_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("text must be between 1 and {MAX_TEXT_BYTES} bytes"),
+            ));
+        }
+        self.send(&Message::ShowText(ShowText {
+            portal_id,
+            x,
+            y,
+            height,
+            rgba,
+            text: text.to_string(),
+        }))
+    }
+
+    pub fn create_image(&mut self, image_id: u32, width: u16, height: u16) -> io::Result<()> {
+        self.send(&Message::CreateImage(CreateImage {
+            image_id,
+            width,
+            height,
+            format: IMAGE_FORMAT_RGBA8,
+        }))
+    }
+
+    pub fn image_data(&mut self, image_id: u32, offset: u32, data: &[u8]) -> io::Result<()> {
+        self.send(&Message::ImageData(ImageData {
+            image_id,
+            offset,
+            data: data.to_vec(),
+        }))
+    }
+
+    pub fn upload_image(
+        &mut self,
+        image_id: u32,
+        width: u16,
+        height: u16,
+        rgba: &[u8],
+    ) -> io::Result<()> {
+        if rgba.len() != width as usize * height as usize * 4 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "pixel buffer does not match the image size",
+            ));
+        }
+        self.create_image(image_id, width, height)?;
+        let mut offset = 0usize;
+        for chunk in rgba.chunks(IMAGE_CHUNK) {
+            self.image_data(image_id, offset as u32, chunk)?;
+            offset += chunk.len();
+        }
+        Ok(())
+    }
+
+    pub fn destroy_image(&mut self, image_id: u32) -> io::Result<()> {
+        self.send(&Message::DestroyImage(DestroyImage { image_id }))
     }
 
     pub fn commit(&mut self, portal_id: u32) -> io::Result<()> {

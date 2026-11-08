@@ -8,9 +8,11 @@ mod client;
 mod compositor;
 mod epoll;
 mod framebuffer;
+mod image;
 mod input;
 mod portal;
 mod server;
+mod text;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

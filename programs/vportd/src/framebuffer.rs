@@ -64,6 +64,52 @@ impl Framebuffer {
             }
         }
     }
+
+    pub fn blend_pixel(&mut self, x: i32, y: i32, rgb: u32, alpha: u32, clip: Rect) {
+        if alpha == 0 {
+            return;
+        }
+        if x < clip.x || y < clip.y || x >= clip.x + clip.w || y >= clip.y + clip.h {
+            return;
+        }
+        if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
+            return;
+        }
+        let index = y as usize * self.width as usize + x as usize;
+        self.pixels[index] = if alpha >= 255 {
+            rgb
+        } else {
+            blend(rgb, self.pixels[index], alpha)
+        };
+    }
+
+    pub fn blit_rgba(&mut self, x: i32, y: i32, w: i32, h: i32, rgba: &[u8], clip: Rect) {
+        let x0 = x.max(clip.x).max(0);
+        let y0 = y.max(clip.y).max(0);
+        let x1 = (x + w).min(clip.x + clip.w).min(self.width as i32);
+        let y1 = (y + h).min(clip.y + clip.h).min(self.height as i32);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        for row in y0..y1 {
+            for col in x0..x1 {
+                let source = ((row - y) as usize * w as usize + (col - x) as usize) * 4;
+                let alpha = rgba[source + 3] as u32;
+                if alpha == 0 {
+                    continue;
+                }
+                let src = ((rgba[source] as u32) << 16)
+                    | ((rgba[source + 1] as u32) << 8)
+                    | rgba[source + 2] as u32;
+                let index = row as usize * self.width as usize + col as usize;
+                self.pixels[index] = if alpha == 255 {
+                    src
+                } else {
+                    blend(src, self.pixels[index], alpha)
+                };
+            }
+        }
+    }
 }
 
 fn blend(src: u32, dst: u32, alpha: u32) -> u32 {
@@ -121,5 +167,51 @@ mod tests {
         };
         fb.fill_rect(0, 0, 1, 1, 0xffffff80, clip);
         assert_eq!(fb.pixels()[0], 0x808080);
+    }
+
+    #[test]
+    fn blit_blends_straight_alpha() {
+        let mut fb = Framebuffer::new(2, 1);
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 1,
+        };
+        let rgba = [255, 0, 0, 255, 255, 255, 255, 128];
+        fb.blit_rgba(0, 0, 2, 1, &rgba, clip);
+        assert_eq!(fb.pixels()[0], 0xff0000);
+        assert_eq!(fb.pixels()[1], 0x808080);
+    }
+
+    #[test]
+    fn blit_is_clipped() {
+        let mut fb = Framebuffer::new(4, 4);
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 4,
+        };
+        let rgba = [1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255];
+        fb.blit_rgba(-1, -1, 2, 2, &rgba, clip);
+        assert_eq!(fb.pixels()[0], 0x040000);
+        assert_eq!(fb.pixels()[1], 0);
+        assert_eq!(fb.pixels()[4], 0);
+    }
+
+    #[test]
+    fn pixel_outside_clip_is_ignored() {
+        let mut fb = Framebuffer::new(4, 4);
+        let clip = Rect {
+            x: 1,
+            y: 1,
+            w: 1,
+            h: 1,
+        };
+        fb.blend_pixel(0, 0, 0xffffff, 255, clip);
+        fb.blend_pixel(1, 1, 0xffffff, 255, clip);
+        assert_eq!(fb.pixels()[0], 0);
+        assert_eq!(fb.pixels()[5], 0xffffff);
     }
 }

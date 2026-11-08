@@ -8,6 +8,9 @@ use std::fmt;
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const HEADER_SIZE: usize = 8;
 pub const MAX_PAYLOAD: u32 = 1 << 20;
+pub const MAX_TEXT_BYTES: usize = 256;
+
+pub const IMAGE_FORMAT_RGBA8: u8 = 0;
 
 pub const GRAB_DENIED: u8 = 0;
 pub const GRAB_GRANTED: u8 = 1;
@@ -17,6 +20,24 @@ pub const MOD_SHIFT: u16 = 0x0001;
 pub const MOD_CTRL: u16 = 0x0002;
 pub const MOD_ALT: u16 = 0x0004;
 
+const SHOW_TEXT_FIXED: usize = 14;
+const IMAGE_DATA_FIXED: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PayloadSize {
+    Fixed(usize),
+    Variable { min: usize, max: usize },
+}
+
+impl PayloadSize {
+    pub fn accepts(self, len: usize) -> bool {
+        match self {
+            Self::Fixed(expected) => len == expected,
+            Self::Variable { min, max } => len >= min && len <= max,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
 pub enum Opcode {
@@ -24,6 +45,11 @@ pub enum Opcode {
     InitPortal = 0x0010,
     ClosePortal = 0x0011,
     DrawRect = 0x0020,
+    DrawImage = 0x0021,
+    ShowText = 0x0022,
+    CreateImage = 0x0030,
+    ImageData = 0x0031,
+    DestroyImage = 0x0032,
     Commit = 0x0040,
     GrabKeyboard = 0x0050,
     ReleaseKeyboard = 0x0051,
@@ -40,6 +66,11 @@ impl Opcode {
             0x0010 => Some(Self::InitPortal),
             0x0011 => Some(Self::ClosePortal),
             0x0020 => Some(Self::DrawRect),
+            0x0021 => Some(Self::DrawImage),
+            0x0022 => Some(Self::ShowText),
+            0x0030 => Some(Self::CreateImage),
+            0x0031 => Some(Self::ImageData),
+            0x0032 => Some(Self::DestroyImage),
             0x0040 => Some(Self::Commit),
             0x0050 => Some(Self::GrabKeyboard),
             0x0051 => Some(Self::ReleaseKeyboard),
@@ -51,19 +82,30 @@ impl Opcode {
         }
     }
 
-    pub fn payload_len(self) -> usize {
+    pub fn payload_size(self) -> PayloadSize {
         match self {
-            Self::Hello => 4,
-            Self::InitPortal => 12,
-            Self::ClosePortal => 4,
-            Self::DrawRect => 16,
-            Self::Commit => 4,
-            Self::GrabKeyboard => 4,
-            Self::ReleaseKeyboard => 4,
-            Self::KeyEvent => 10,
-            Self::PointerButton => 10,
-            Self::FocusChanged => 5,
-            Self::GrabStatus => 5,
+            Self::Hello => PayloadSize::Fixed(4),
+            Self::InitPortal => PayloadSize::Fixed(12),
+            Self::ClosePortal => PayloadSize::Fixed(4),
+            Self::DrawRect => PayloadSize::Fixed(16),
+            Self::DrawImage => PayloadSize::Fixed(12),
+            Self::ShowText => PayloadSize::Variable {
+                min: SHOW_TEXT_FIXED + 1,
+                max: SHOW_TEXT_FIXED + MAX_TEXT_BYTES,
+            },
+            Self::CreateImage => PayloadSize::Fixed(9),
+            Self::ImageData => PayloadSize::Variable {
+                min: IMAGE_DATA_FIXED + 1,
+                max: MAX_PAYLOAD as usize,
+            },
+            Self::DestroyImage => PayloadSize::Fixed(4),
+            Self::Commit => PayloadSize::Fixed(4),
+            Self::GrabKeyboard => PayloadSize::Fixed(4),
+            Self::ReleaseKeyboard => PayloadSize::Fixed(4),
+            Self::KeyEvent => PayloadSize::Fixed(10),
+            Self::PointerButton => PayloadSize::Fixed(10),
+            Self::FocusChanged => PayloadSize::Fixed(5),
+            Self::GrabStatus => PayloadSize::Fixed(5),
         }
     }
 }
@@ -78,6 +120,13 @@ pub enum ProtoError {
         expected: usize,
         got: usize,
     },
+    PayloadOutOfRange {
+        opcode: u16,
+        min: usize,
+        max: usize,
+        got: usize,
+    },
+    InvalidUtf8,
 }
 
 impl fmt::Display for ProtoError {
@@ -94,6 +143,16 @@ impl fmt::Display for ProtoError {
                 f,
                 "bad payload length for opcode {opcode:#06x}: expected {expected}, got {got}"
             ),
+            Self::PayloadOutOfRange {
+                opcode,
+                min,
+                max,
+                got,
+            } => write!(
+                f,
+                "payload length out of range for opcode {opcode:#06x}: expected {min} to {max}, got {got}"
+            ),
+            Self::InvalidUtf8 => write!(f, "text is not valid UTF-8"),
         }
     }
 }
@@ -173,6 +232,44 @@ pub struct DrawRect {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawImage {
+    pub portal_id: u32,
+    pub image_id: u32,
+    pub x: i16,
+    pub y: i16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShowText {
+    pub portal_id: u32,
+    pub x: i16,
+    pub y: i16,
+    pub height: u16,
+    pub rgba: u32,
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CreateImage {
+    pub image_id: u32,
+    pub width: u16,
+    pub height: u16,
+    pub format: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageData {
+    pub image_id: u32,
+    pub offset: u32,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DestroyImage {
+    pub image_id: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Commit {
     pub portal_id: u32,
 }
@@ -217,12 +314,17 @@ pub struct GrabStatus {
     pub status: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
     Hello(Hello),
     InitPortal(InitPortal),
     ClosePortal(ClosePortal),
     DrawRect(DrawRect),
+    DrawImage(DrawImage),
+    ShowText(ShowText),
+    CreateImage(CreateImage),
+    ImageData(ImageData),
+    DestroyImage(DestroyImage),
     Commit(Commit),
     GrabKeyboard(GrabKeyboard),
     ReleaseKeyboard(ReleaseKeyboard),
@@ -239,6 +341,11 @@ impl Message {
             Self::InitPortal(_) => Opcode::InitPortal,
             Self::ClosePortal(_) => Opcode::ClosePortal,
             Self::DrawRect(_) => Opcode::DrawRect,
+            Self::DrawImage(_) => Opcode::DrawImage,
+            Self::ShowText(_) => Opcode::ShowText,
+            Self::CreateImage(_) => Opcode::CreateImage,
+            Self::ImageData(_) => Opcode::ImageData,
+            Self::DestroyImage(_) => Opcode::DestroyImage,
             Self::Commit(_) => Opcode::Commit,
             Self::GrabKeyboard(_) => Opcode::GrabKeyboard,
             Self::ReleaseKeyboard(_) => Opcode::ReleaseKeyboard,
@@ -249,12 +356,22 @@ impl Message {
         }
     }
 
+    fn payload_len(&self) -> usize {
+        match self {
+            Self::ImageData(m) => IMAGE_DATA_FIXED + m.data.len(),
+            Self::ShowText(m) => SHOW_TEXT_FIXED + m.text.len(),
+            other => match other.opcode().payload_size() {
+                PayloadSize::Fixed(len) => len,
+                PayloadSize::Variable { min, .. } => min,
+            },
+        }
+    }
+
     pub fn encode_into(&self, out: &mut Vec<u8>) {
-        let opcode = self.opcode();
         let header = Header {
-            opcode: opcode as u16,
+            opcode: self.opcode() as u16,
             flags: 0,
-            payload_len: opcode.payload_len() as u32,
+            payload_len: self.payload_len() as u32,
         };
         out.extend_from_slice(&header.encode());
         match self {
@@ -278,6 +395,32 @@ impl Message {
                 put_u16(out, m.h);
                 put_u32(out, m.rgba);
             }
+            Self::DrawImage(m) => {
+                put_u32(out, m.portal_id);
+                put_u32(out, m.image_id);
+                put_i16(out, m.x);
+                put_i16(out, m.y);
+            }
+            Self::ShowText(m) => {
+                put_u32(out, m.portal_id);
+                put_i16(out, m.x);
+                put_i16(out, m.y);
+                put_u16(out, m.height);
+                put_u32(out, m.rgba);
+                out.extend_from_slice(m.text.as_bytes());
+            }
+            Self::CreateImage(m) => {
+                put_u32(out, m.image_id);
+                put_u16(out, m.width);
+                put_u16(out, m.height);
+                put_u8(out, m.format);
+            }
+            Self::ImageData(m) => {
+                put_u32(out, m.image_id);
+                put_u32(out, m.offset);
+                out.extend_from_slice(&m.data);
+            }
+            Self::DestroyImage(m) => put_u32(out, m.image_id),
             Self::Commit(m) => put_u32(out, m.portal_id),
             Self::GrabKeyboard(m) => put_u32(out, m.portal_id),
             Self::ReleaseKeyboard(m) => put_u32(out, m.portal_id),
@@ -309,12 +452,20 @@ impl Message {
     pub fn decode(header: &Header, payload: &[u8]) -> Result<Self, ProtoError> {
         let opcode =
             Opcode::from_u16(header.opcode).ok_or(ProtoError::UnknownOpcode(header.opcode))?;
-        let expected = opcode.payload_len();
-        if payload.len() != expected {
-            return Err(ProtoError::BadPayloadLength {
-                opcode: header.opcode,
-                expected,
-                got: payload.len(),
+        let size = opcode.payload_size();
+        if !size.accepts(payload.len()) {
+            return Err(match size {
+                PayloadSize::Fixed(expected) => ProtoError::BadPayloadLength {
+                    opcode: header.opcode,
+                    expected,
+                    got: payload.len(),
+                },
+                PayloadSize::Variable { min, max } => ProtoError::PayloadOutOfRange {
+                    opcode: header.opcode,
+                    min,
+                    max,
+                    got: payload.len(),
+                },
             });
         }
         let mut r = Reader {
@@ -342,6 +493,45 @@ impl Message {
                 h: r.u16(),
                 rgba: r.u32(),
             }),
+            Opcode::DrawImage => Self::DrawImage(DrawImage {
+                portal_id: r.u32(),
+                image_id: r.u32(),
+                x: r.i16(),
+                y: r.i16(),
+            }),
+            Opcode::ShowText => {
+                let portal_id = r.u32();
+                let x = r.i16();
+                let y = r.i16();
+                let height = r.u16();
+                let rgba = r.u32();
+                let text = String::from_utf8(payload[SHOW_TEXT_FIXED..].to_vec())
+                    .map_err(|_| ProtoError::InvalidUtf8)?;
+                Self::ShowText(ShowText {
+                    portal_id,
+                    x,
+                    y,
+                    height,
+                    rgba,
+                    text,
+                })
+            }
+            Opcode::CreateImage => Self::CreateImage(CreateImage {
+                image_id: r.u32(),
+                width: r.u16(),
+                height: r.u16(),
+                format: r.u8(),
+            }),
+            Opcode::ImageData => {
+                let image_id = r.u32();
+                let offset = r.u32();
+                Self::ImageData(ImageData {
+                    image_id,
+                    offset,
+                    data: payload[IMAGE_DATA_FIXED..].to_vec(),
+                })
+            }
+            Opcode::DestroyImage => Self::DestroyImage(DestroyImage { image_id: r.u32() }),
             Opcode::Commit => Self::Commit(Commit { portal_id: r.u32() }),
             Opcode::GrabKeyboard => Self::GrabKeyboard(GrabKeyboard { portal_id: r.u32() }),
             Opcode::ReleaseKeyboard => {
@@ -424,9 +614,14 @@ impl Reader<'_> {
 mod tests {
     use super::*;
 
-    fn roundtrip(message: Message) {
+    fn encode(message: &Message) -> Vec<u8> {
         let mut buf = Vec::new();
         message.encode_into(&mut buf);
+        buf
+    }
+
+    fn roundtrip(message: Message) {
+        let buf = encode(&message);
         assert_eq!(frame_len(&buf), Ok(Some(buf.len())));
         let header = Header::decode(&buf).unwrap();
         let decoded = Message::decode(&header, &buf[HEADER_SIZE..]).unwrap();
@@ -455,6 +650,32 @@ mod tests {
             h: 100,
             rgba: 0xdeadbeef,
         }));
+        roundtrip(Message::DrawImage(DrawImage {
+            portal_id: 7,
+            image_id: 3,
+            x: -4,
+            y: 9,
+        }));
+        roundtrip(Message::ShowText(ShowText {
+            portal_id: 7,
+            x: 10,
+            y: 20,
+            height: 80,
+            rgba: 0xffffffff,
+            text: "R$ 12,90".to_string(),
+        }));
+        roundtrip(Message::CreateImage(CreateImage {
+            image_id: 3,
+            width: 256,
+            height: 128,
+            format: IMAGE_FORMAT_RGBA8,
+        }));
+        roundtrip(Message::ImageData(ImageData {
+            image_id: 3,
+            offset: 4096,
+            data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        }));
+        roundtrip(Message::DestroyImage(DestroyImage { image_id: 3 }));
         roundtrip(Message::Commit(Commit { portal_id: 7 }));
         roundtrip(Message::GrabKeyboard(GrabKeyboard { portal_id: 7 }));
         roundtrip(Message::ReleaseKeyboard(ReleaseKeyboard { portal_id: 7 }));
@@ -524,5 +745,62 @@ mod tests {
             Message::decode(&header, &[]),
             Err(ProtoError::UnknownOpcode(0x7777))
         );
+    }
+
+    #[test]
+    fn text_longer_than_limit_is_rejected() {
+        let payload = vec![b'a'; SHOW_TEXT_FIXED + MAX_TEXT_BYTES + 1];
+        let header = Header {
+            opcode: Opcode::ShowText as u16,
+            flags: 0,
+            payload_len: payload.len() as u32,
+        };
+        assert!(matches!(
+            Message::decode(&header, &payload),
+            Err(ProtoError::PayloadOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn empty_text_is_rejected() {
+        let payload = vec![0u8; SHOW_TEXT_FIXED];
+        let header = Header {
+            opcode: Opcode::ShowText as u16,
+            flags: 0,
+            payload_len: payload.len() as u32,
+        };
+        assert!(matches!(
+            Message::decode(&header, &payload),
+            Err(ProtoError::PayloadOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn invalid_utf8_text_is_rejected() {
+        let mut payload = vec![0u8; SHOW_TEXT_FIXED];
+        payload.push(0xff);
+        let header = Header {
+            opcode: Opcode::ShowText as u16,
+            flags: 0,
+            payload_len: payload.len() as u32,
+        };
+        assert_eq!(
+            Message::decode(&header, &payload),
+            Err(ProtoError::InvalidUtf8)
+        );
+    }
+
+    #[test]
+    fn image_data_without_pixels_is_rejected() {
+        let payload = vec![0u8; IMAGE_DATA_FIXED];
+        let header = Header {
+            opcode: Opcode::ImageData as u16,
+            flags: 0,
+            payload_len: payload.len() as u32,
+        };
+        assert!(matches!(
+            Message::decode(&header, &payload),
+            Err(ProtoError::PayloadOutOfRange { .. })
+        ));
     }
 }

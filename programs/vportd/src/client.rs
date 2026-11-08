@@ -8,15 +8,22 @@ use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 
-use vport_proto::{frame_len, Header, Hello, Message, HEADER_SIZE, PROTOCOL_VERSION};
+use vport_proto::{
+    frame_len, Header, Hello, Message, HEADER_SIZE, IMAGE_FORMAT_RGBA8, PROTOCOL_VERSION,
+};
 
 use crate::epoll::PeerCred;
-use crate::portal::{Portal, MAX_PENDING_RECTS};
+use crate::image::Image;
+use crate::portal::{Command, Portal, Scene, MAX_PENDING_COMMANDS};
 
 const READ_CHUNK: usize = 4096;
 const READ_BUDGET_PER_WAKEUP: usize = 16;
 const MAX_PORTALS_PER_CLIENT: usize = 8;
 const MAX_OUTPUT_BACKLOG: usize = 64 * 1024;
+const MAX_IMAGES_PER_CLIENT: usize = 32;
+const MAX_IMAGE_BYTES_PER_CLIENT: usize = 8 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION: u16 = 4096;
+const MAX_TEXT_HEIGHT: u16 = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
@@ -33,6 +40,8 @@ pub struct Client {
     outbuf: Vec<u8>,
     greeted: bool,
     portals: BTreeMap<u32, Portal>,
+    images: BTreeMap<u32, Image>,
+    image_bytes: usize,
     dirty: bool,
     doomed: bool,
     write_armed: bool,
@@ -48,6 +57,8 @@ impl Client {
             outbuf: Vec::with_capacity(64),
             greeted: false,
             portals: BTreeMap::new(),
+            images: BTreeMap::new(),
+            image_bytes: 0,
             dirty: false,
             doomed: false,
             write_armed: false,
@@ -63,8 +74,11 @@ impl Client {
         self.stream.as_raw_fd()
     }
 
-    pub fn portals(&self) -> impl Iterator<Item = &Portal> {
-        self.portals.values()
+    pub fn scenes(&self) -> impl Iterator<Item = Scene<'_>> {
+        self.portals.values().map(move |portal| Scene {
+            portal,
+            images: &self.images,
+        })
     }
 
     pub fn portal_entries(&self) -> impl Iterator<Item = (u32, &Portal)> {
@@ -163,6 +177,19 @@ impl Client {
         Ok(())
     }
 
+    fn push_command(&mut self, portal_id: u32, command: Command) -> io::Result<()> {
+        let portal = self
+            .portals
+            .get_mut(&portal_id)
+            .ok_or_else(|| violation("unknown portal id"))?;
+        if !portal.push(command) {
+            return Err(violation(&format!(
+                "more than {MAX_PENDING_COMMANDS} uncommitted commands"
+            )));
+        }
+        Ok(())
+    }
+
     fn handle(&mut self, message: Message) -> io::Result<()> {
         match message {
             Message::Hello(hello) => {
@@ -198,16 +225,62 @@ impl Client {
                 self.requests.push(Request::PortalClosed(close.portal_id));
                 Ok(())
             }
-            Message::DrawRect(rect) => {
-                let portal = self
-                    .portals
-                    .get_mut(&rect.portal_id)
-                    .ok_or_else(|| violation("unknown portal id"))?;
-                if !portal.push(rect) {
-                    return Err(violation(&format!(
-                        "more than {MAX_PENDING_RECTS} uncommitted rects"
-                    )));
+            Message::DrawRect(rect) => self.push_command(rect.portal_id, Command::Rect(rect)),
+            Message::DrawImage(draw) => {
+                if !self.images.contains_key(&draw.image_id) {
+                    return Err(violation("unknown image id"));
                 }
+                self.push_command(draw.portal_id, Command::Image(draw))
+            }
+            Message::ShowText(show) => {
+                if show.height == 0 || show.height > MAX_TEXT_HEIGHT {
+                    return Err(violation("text height out of range"));
+                }
+                self.push_command(show.portal_id, Command::Text(show))
+            }
+            Message::CreateImage(create) => {
+                if create.format != IMAGE_FORMAT_RGBA8 {
+                    return Err(violation("unsupported image format"));
+                }
+                if self.images.contains_key(&create.image_id) {
+                    return Err(violation("image id already in use"));
+                }
+                if self.images.len() >= MAX_IMAGES_PER_CLIENT {
+                    return Err(violation("image limit reached"));
+                }
+                let dimensions_ok = create.width >= 1
+                    && create.height >= 1
+                    && create.width <= MAX_IMAGE_DIMENSION
+                    && create.height <= MAX_IMAGE_DIMENSION;
+                if !dimensions_ok {
+                    return Err(violation("image dimensions out of range"));
+                }
+                let bytes = create.width as usize * create.height as usize * 4;
+                if self.image_bytes + bytes > MAX_IMAGE_BYTES_PER_CLIENT {
+                    return Err(violation("image memory limit exceeded"));
+                }
+                self.image_bytes += bytes;
+                self.images
+                    .insert(create.image_id, Image::new(create.width, create.height));
+                Ok(())
+            }
+            Message::ImageData(upload) => {
+                let image = self
+                    .images
+                    .get_mut(&upload.image_id)
+                    .ok_or_else(|| violation("unknown image id"))?;
+                if !image.write(upload.offset as usize, &upload.data) {
+                    return Err(violation("image data out of bounds"));
+                }
+                Ok(())
+            }
+            Message::DestroyImage(destroy) => {
+                let image = self
+                    .images
+                    .remove(&destroy.image_id)
+                    .ok_or_else(|| violation("unknown image id"))?;
+                self.image_bytes -= image.byte_len();
+                self.dirty = true;
                 Ok(())
             }
             Message::Commit(commit) => {

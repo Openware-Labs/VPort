@@ -6,15 +6,50 @@
 use libvport::{hid_to_ascii, Connection, Event, GRAB_GRANTED, MOD_SHIFT};
 
 const PORTAL: u32 = 1;
-const BUTTON_X: i32 = 20;
-const BUTTON_Y: i32 = 20;
-const BUTTON_W: i32 = 200;
-const BUTTON_H: i32 = 80;
+const LOGO: u32 = 1;
+const LOGO_HEIGHT: u32 = 110;
+const BUTTON_X: i32 = 440;
+const BUTTON_Y: i32 = 270;
+const BUTTON_W: i32 = 180;
+const BUTTON_H: i32 = 70;
+const MAX_CODE: usize = 20;
 
-fn main() -> std::io::Result<()> {
-    let mut conn = Connection::connect_default()?;
-    conn.init_portal(PORTAL, 100, 100, 640, 360)?;
+fn render_logo() -> (u16, u16, Vec<u8>) {
+    let svg = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/VPort.svg"
+    ));
+    let options = resvg::usvg::Options::default();
+    let tree =
+        resvg::usvg::Tree::from_data(svg, &options).expect("assets/VPort.svg is not a valid SVG");
+    let size = tree.size();
+    let scale = LOGO_HEIGHT as f32 / size.height();
+    let width = (size.width() * scale).ceil().max(1.0) as u32;
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(width, LOGO_HEIGHT).expect("invalid logo dimensions");
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let mut pixels = pixmap.data().to_vec();
+    for pixel in pixels.chunks_exact_mut(4) {
+        let alpha = pixel[3] as u32;
+        if alpha != 0 && alpha != 255 {
+            for channel in &mut pixel[..3] {
+                *channel = ((*channel as u32 * 255 + alpha / 2) / alpha).min(255) as u8;
+            }
+        }
+    }
+    (width as u16, LOGO_HEIGHT as u16, pixels)
+}
+
+fn draw_scene(conn: &mut Connection, code: &str) -> std::io::Result<()> {
     conn.draw_rect(PORTAL, 0, 0, 640, 360, 0x202020ff)?;
+    conn.draw_image(PORTAL, LOGO, 20, 20)?;
+    conn.show_text(PORTAL, 20, 140, 28, 0xb0b0b0ff, "Arroz tipo 1 5kg")?;
+    conn.show_text(PORTAL, 20, 180, 80, 0xffffffff, "R$ 12,90")?;
+    conn.show_text(PORTAL, 20, 300, 24, 0x8a8a8aff, &format!("Code: {code}"))?;
     conn.draw_rect(
         PORTAL,
         BUTTON_X as i16,
@@ -23,7 +58,24 @@ fn main() -> std::io::Result<()> {
         BUTTON_H as u16,
         0x00c853ff,
     )?;
-    conn.commit(PORTAL)?;
+    conn.show_text(
+        PORTAL,
+        (BUTTON_X + 62) as i16,
+        (BUTTON_Y + 14) as i16,
+        40,
+        0x102010ff,
+        "OK",
+    )?;
+    conn.commit(PORTAL)
+}
+
+fn main() -> std::io::Result<()> {
+    let (logo_width, logo_height, logo_pixels) = render_logo();
+
+    let mut conn = Connection::connect_default()?;
+    conn.upload_image(LOGO, logo_width, logo_height, &logo_pixels)?;
+    conn.init_portal(PORTAL, 100, 100, 640, 360)?;
+    draw_scene(&mut conn, "")?;
     conn.grab_keyboard(PORTAL)?;
 
     let mut code = String::new();
@@ -42,9 +94,13 @@ fn main() -> std::io::Result<()> {
                     Some('\n') => {
                         println!("code: {code}");
                         code.clear();
+                        draw_scene(&mut conn, &code)?;
                     }
-                    Some(ch) => code.push(ch),
-                    None => {}
+                    Some(ch) if code.len() < MAX_CODE => {
+                        code.push(ch);
+                        draw_scene(&mut conn, &code)?;
+                    }
+                    _ => {}
                 }
             }
             Event::PointerButton(click) if click.pressed => {
@@ -67,5 +123,6 @@ fn main() -> std::io::Result<()> {
     }
 
     conn.close_portal(PORTAL)?;
+    conn.destroy_image(LOGO)?;
     Ok(())
 }

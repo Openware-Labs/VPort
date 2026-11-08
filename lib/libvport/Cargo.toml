@@ -4,4 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-vport-proto = { path = "../vport-proto" }
+vport-proto = { path = "../../protocol/vport-proto" }
+
+[dev-dependencies]
+resvg = "0.45"

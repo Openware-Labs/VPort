@@ -6,13 +6,20 @@
          for embedded and point-of-sale Linux systems
 
 
---[ 1. WHAT IS VPORT ]-----------------------------------------
+--[ 1. WHAT IS VPORT ]----------------------------------------
 
-VPort is a minimal graphics protocol and display server for
-Linux. A client (a script, a point-of-sale program, a kiosk
-application) talks to the server through a Unix domain socket
-using a small binary wire protocol, and the server draws what
-the client asks for in an isolated "portal" (viewport).
+VPort is a minimal graphics protocol for Linux. A client (a
+script, a point-of-sale program, a kiosk application) talks to
+a display server through a Unix domain socket using a small
+binary wire protocol, and the server draws what the client
+asks for in an isolated "portal" (viewport).
+
+VPort is the PROTOCOL. It is defined by a specification, and
+not by any piece of software. This source tree contains the
+specification and one reference implementation of each side,
+but anyone may write another client library or another server,
+in any language. If it follows the specification, it works
+with every other conforming piece.
 
 VPort is NOT a replacement for X11 or Wayland on the desktop.
 It does not run browsers, IDEs or toolkits. It exists for
@@ -21,7 +28,7 @@ registers, self-service totems, information panels, embedded
 controllers and terminal scripts.
 
 
---[ 2. DESIGN GOALS ]------------------------------------------
+--[ 2. DESIGN GOALS ]-----------------------------------------
 
   Small      The whole graphical stack should fit in less than
              20 MB of RAM. A typical X11 + Chromium kiosk setup
@@ -37,12 +44,12 @@ controllers and terminal scripts.
              to restart in milliseconds without taking the
              application down.
 
-  Simple     Fixed size binary commands, one thread, one
-             epoll loop, a handful of dependencies, hard
-             limits on everything a client can allocate.
+  Simple     Binary commands, one thread, one epoll loop, a
+             handful of dependencies, hard limits on
+             everything a client can allocate.
 
 
---[ 3. NON-GOALS ]---------------------------------------------
+--[ 3. NON-GOALS ]--------------------------------------------
 
   - Running generic desktop applications.
   - Window management, decorations, compositing effects.
@@ -50,99 +57,137 @@ controllers and terminal scripts.
   - Rendering HTML, CSS or any markup.
 
 
---[ 4. COMPONENTS ]--------------------------------------------
+--[ 4. THE THREE PARTS ]--------------------------------------
 
-  vportd       The server daemon. Listens on a Unix socket,
-               validates every message, keeps the state of
-               each portal and presents committed frames.
+  VPort       The protocol. Specified in protocol/PROTOCOL.
+              protocol/vport-proto holds the reference wire
+              definitions in Rust, used by the two programs
+              below. Nothing forces an implementation to use
+              them: the specification is enough.
 
-  libvport     The client library. Connects to vportd and
-               exposes calls such as init_portal, draw_rect
-               and commit. Written in Rust, a C ABI is
-               planned for C, Python and shell bindings.
+  libvport    A client library. It connects to a server and
+              exposes calls such as init_portal, draw_rect,
+              show_text and commit. This one is the reference,
+              written in Rust, with a C ABI planned for C,
+              Python and shell bindings. Anyone can write
+              another one.
 
-  vport-proto  The wire protocol shared by both sides.
-               See doc/PROTOCOL.
+  vportd      A server. It listens on a Unix socket, validates
+              every message, keeps the state of each portal,
+              presents committed frames and routes input. This
+              one is both the default server and the reference
+              implementation. Anyone can write another one.
+
+  libvport and vportd do not depend on each other. They only
+  share the protocol.
 
 
---[ 5. SOURCE TREE ]-------------------------------------------
+--[ 5. SOURCE TREE ]------------------------------------------
 
   vport/
   +-- README
+  +-- LICENSE
   +-- CREDITS
   +-- CONTRIBUTING
   +-- Cargo.toml
-  +-- doc/
-  |   +-- PROTOCOL        wire protocol specification
+  +-- assets/                 artwork, including the logo
+  +-- protocol/               THE VPORT PROTOCOL
+  |   +-- PROTOCOL            the specification
+  |   +-- vport-proto/        reference wire definitions (Rust)
   +-- lib/
-  |   +-- vport-proto/    shared protocol definitions
-  |   +-- libvport/       client library and examples
+  |   +-- libvport/           reference client library
   +-- programs/
-      +-- vportd/         the display server daemon
+      +-- vportd/             default and reference server
 
 
---[ 6. BUILDING ]----------------------------------------------
+--[ 6. BUILDING ]---------------------------------------------
 
   A recent stable Rust toolchain is the only requirement.
 
       $ cargo build --release
       $ cargo test
 
+  The SDL2 backend of vportd is optional and needs the SDL2
+  development package:
 
---[ 7. RUNNING ]-----------------------------------------------
+      $ cargo build --release -p vportd --features sdl2
+
+  Text needs a TrueType font on the machine running vportd.
+  DejaVu Sans is found in the usual system paths.
+
+
+--[ 7. RUNNING ]----------------------------------------------
 
   The default socket is /run/vport/vport.sock, which needs
   root. For development use a socket in /tmp:
 
       $ export VPORT_SOCKET=/tmp/vport-dev.sock
-      $ cargo run -p vportd
+      $ cargo run -p vportd --features sdl2
 
   and in another terminal:
 
       $ export VPORT_SOCKET=/tmp/vport-dev.sock
       $ cargo run -p libvport --example demo
 
+  The demo draws a product screen with the VPort logo, grabs
+  the keyboard and shows the digits you type, the same way a
+  barcode scanner would type them. Enter prints the code in
+  the terminal and a click on the green button closes the
+  demo.
+
+  Closing the window or pressing Escape stops vportd.
+
   Optional environment for vportd:
 
-      VPORT_BACKEND    "ppm" or "sdl2" (default: sdl2 when built
-                       with the sdl2 feature, otherwise ppm)
+      VPORT_BACKEND    "ppm" or "sdl2" (default: sdl2 when
+                       built with the sdl2 feature, otherwise
+                       ppm)
       VPORT_PPM        file written by the ppm backend
                        (default /tmp/vport-frame.ppm)
       VPORT_SIZE       screen size as WIDTHxHEIGHT
                        (default 800x480)
-      VPORT_GRAB_UIDS  comma separated uids allowed to grab the
-                       keyboard (default: 0 and the uid of
-                       vportd)
-
-  To get a window with the SDL2 backend (needs the SDL2
-  development package):
-
-      $ cargo run -p vportd --features sdl2
-
-  Closing the window or pressing Escape stops vportd.
+      VPORT_FONT       TrueType font used to draw text
+                       (default: DejaVu Sans or Liberation
+                       Sans from the usual system paths)
+      VPORT_GRAB_UIDS  comma separated uids allowed to grab
+                       the keyboard (default: 0 and the uid
+                       of vportd)
 
 
---[ 8. STATUS ]------------------------------------------------
+--[ 8. STATUS ]-----------------------------------------------
 
-  VPort is in early development. The wire protocol (v0), the
-  server loop and the client library exist. There is no
-  rendering backend yet: committed frames are only kept in
-  memory. Planned next:
+  VPort is in early development and the protocol is still a
+  draft. Working today: wire protocol v0, a server with PPM
+  and SDL2 backends, portals with clipped and alpha blended
+  rectangles, images and text, keyboard and pointer button
+  input, focus, the exclusive keyboard grab, and the
+  reference client library. Planned next:
 
-      - in-memory backend with PPM dump (for testing)
-      - SDL2 backend (prototype)
-      - DRM/KMS backend
-      - text and image commands
-      - PointerMove events, evdev input for the DRM
-      backend, secure attention key
+      - formal specification with MUST/SHOULD wording and
+        byte exact test vectors
+      - conformance tests for servers and client libraries
+      - MeasureText, to measure a text before drawing it
+      - more pixel formats, such as RGB565
+      - DRM/KMS backend with evdev input and EVIOCGRAB
+      - PointerMove events
+      - secure attention key
+      - scene retention and reconnection in libvport
       - C ABI for libvport
 
 
---[ 9. DOCUMENTATION ]-----------------------------------------
+--[ 9. DOCUMENTATION ]----------------------------------------
 
-  doc/PROTOCOL        the wire protocol
+  protocol/PROTOCOL   the VPort specification
   CONTRIBUTING        how to send patches
   CREDITS             who made this
+  LICENSE             MIT license
+
+
+--[ 10. LICENSE ]---------------------------------------------
+
+  VPort is released under the MIT license. See LICENSE. It
+  covers the specification, the reference wire definitions,
+  the reference client library and the reference server.
 
 
 ==============================================================

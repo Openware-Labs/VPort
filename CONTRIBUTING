@@ -39,10 +39,14 @@ If you plan something large, describe it to the maintainers
 
 --[ 3. PROTOCOL CHANGES ]--------------------------------------
 
-  The wire protocol is documented in doc/PROTOCOL. A change to
-  an opcode, a payload layout or a limit must update that file
-  in the same commit, and must bump PROTOCOL_VERSION when it
-  is not backward compatible.
+  The VPort protocol is defined by protocol/PROTOCOL, not by
+  any implementation. The code in this tree (vport-proto,
+  libvport, vportd) follows the specification, never the other
+  way around.
+
+  A change to an opcode, a payload layout or a limit must
+  update protocol/PROTOCOL in the same commit, and must bump
+  PROTOCOL_VERSION when it is not backward compatible.
 
   The server must treat every byte from a client as hostile.
   A malformed frame disconnects that client and nothing else.

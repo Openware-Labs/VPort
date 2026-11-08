@@ -5,17 +5,28 @@
                        Version 0 (draft)
 
 
---[ 1. OVERVIEW ]----------------------------------------------
+--[ 1. SCOPE ]------------------------------------------------
 
-A client talks to vportd over a Unix domain socket
-(SOCK_STREAM). Messages flow as a continuous byte stream; each
-message is one frame made of an 8 byte header followed by a
-payload whose size is fixed by the opcode.
+  This document is the specification of the VPort protocol.
+  It does not depend on any implementation. A client library
+  or a server is compatible with VPort when it follows this
+  document byte for byte. libvport and vportd, found in the
+  same source tree, are the reference client library and the
+  reference server; they are not the protocol.
 
-All integers are little-endian. There is no padding.
+
+--[ 2. OVERVIEW ]---------------------------------------------
+
+  A client talks to a server (for example vportd) over a Unix
+  domain socket (SOCK_STREAM). Messages flow as a continuous
+  byte stream; each message is one frame made of an 8 byte
+  header followed by a payload. The size of the payload is
+  fixed by the opcode, or limited to a range by it.
+
+  All integers are little-endian. There is no padding.
 
 
---[ 2. HEADER ]------------------------------------------------
+--[ 3. HEADER ]-----------------------------------------------
 
    0               2               4                       8
    +---------------+---------------+-----------------------+
@@ -23,19 +34,19 @@ All integers are little-endian. There is no padding.
    |      u16      |      u16      |          u32          |
    +---------------+---------------+-----------------------+
 
-  opcode       identifies the message, see section 4.
+  opcode       identifies the message, see section 5.
   flags        reserved, must be 0.
-  payload_len  size of the payload in bytes. It must match the
-               size defined for the opcode and must never
+  payload_len  size of the payload in bytes. It must be a size
+               the opcode allows (section 5) and must never
                exceed 1 MiB (1048576).
 
 
---[ 3. SESSION ]-----------------------------------------------
+--[ 4. SESSION ]----------------------------------------------
 
   1. The client connects to the socket.
   2. The client sends Hello with the version it speaks.
   3. The server answers Hello with the version it accepts.
-  4. The client may then create portals and draw.
+  4. The client may then create portals and images, and draw.
 
   Any message sent before Hello is a protocol violation. A
   second Hello is a protocol violation. A version mismatch
@@ -46,14 +57,19 @@ All integers are little-endian. There is no padding.
   never taken from the protocol.
 
 
---[ 4. MESSAGES ]----------------------------------------------
+--[ 5. MESSAGES ]---------------------------------------------
 
   Opcode  Name             Direction          Payload size
-  ------  -----------      ---------------    ------------
+  ------  ---------------  -----------------  ------------
   0x0001  Hello            both                4
   0x0010  InitPortal       client -> server   12
   0x0011  ClosePortal      client -> server    4
   0x0020  DrawRect         client -> server   16
+  0x0021  DrawImage        client -> server   12
+  0x0022  ShowText         client -> server   15 to 270
+  0x0030  CreateImage      client -> server    9
+  0x0031  ImageData        client -> server    9 to 1048576
+  0x0032  DestroyImage     client -> server    4
   0x0040  Commit           client -> server    4
   0x0050  GrabKeyboard     client -> server    4
   0x0051  ReleaseKeyboard  client -> server    4
@@ -61,6 +77,8 @@ All integers are little-endian. There is no padding.
   0x8002  PointerButton    server -> client   10
   0x8003  FocusChanged     server -> client    5
   0x8004  GrabStatus       server -> client    5
+
+  Opcodes from 0x8000 up are sent only by the server.
 
 
   Hello (0x0001)
@@ -121,6 +139,95 @@ All integers are little-endian. There is no padding.
       Colour is 0xRRGGBBAA. Nothing is shown until Commit.
 
 
+  DrawImage (0x0021)
+
+      +-------------------------------+
+      |           portal_id           |
+      |              u32              |
+      +-------------------------------+
+      |           image_id            |
+      |              u32              |
+      +---------------+---------------+
+      |       x       |       y       |
+      |      i16      |      i16      |
+      +---------------+---------------+
+
+      Queues the whole image at 1:1, relative to the portal,
+      alpha blended. The image must exist when the command is
+      sent. Nothing is shown until Commit.
+
+
+  ShowText (0x0022)
+
+      Offset  Size  Field
+      ------  ----  ------------------------------------
+      0       4     portal_id  u32
+      4       2     x          i16
+      6       2     y          i16
+      8       2     height     u16
+      10      4     rgba       u32
+      14      n     text       1 to 256 bytes of UTF-8
+
+      Queues one line of text. x and y are the top left corner
+      of the line, relative to the portal. height is the font
+      size in pixels, from 1 to 512. Colour is 0xRRGGBBAA.
+      The text is not wrapped, and control characters are
+      ignored. Nothing is shown until Commit.
+
+      The font is chosen by the server, so the width of the
+      text can differ between servers.
+
+
+  CreateImage (0x0030)
+
+      +-------------------------------+
+      |           image_id            |
+      |              u32              |
+      +---------------+---------------+
+      |     width     |    height     |
+      |      u16      |      u16      |
+      +-------+-------+---------------+
+      |format |
+      |  u8   |
+      +-------+
+
+      Creates an image owned by the client, filled with
+      transparent black. Format 0 is RGBA8: four bytes per
+      pixel in the order R, G, B, A, straight (not
+      premultiplied) alpha, rows from top to bottom, no
+      padding. Width and height are 1 to 4096.
+
+
+  ImageData (0x0031)
+
+      +-------------------------------+
+      |           image_id            |
+      |              u32              |
+      +-------------------------------+
+      |            offset             |
+      |              u32              |
+      +-------------------------------+
+      | pixel bytes, at least 1       |
+      +-------------------------------+
+
+      Writes bytes into the image starting at the byte offset.
+      Several messages can fill one image, and the same bytes
+      can be rewritten at any time. The pixels shown are the
+      ones in the image when the portal is next composed, so
+      streaming an image is: ImageData, then Commit.
+
+
+  DestroyImage (0x0032)
+
+      +-------------------------------+
+      |           image_id            |
+      |              u32              |
+      +-------------------------------+
+
+      Frees the image. Commands that still refer to it draw
+      nothing.
+
+
   Commit (0x0040)
 
       +-------------------------------+
@@ -131,12 +238,15 @@ All integers are little-endian. There is no padding.
       Atomically replaces the visible frame of the portal with
       all commands queued since the previous Commit.
 
+
   GrabKeyboard (0x0050) and ReleaseKeyboard (0x0051)
 
       +-------------------------------+
       |           portal_id           |
       |              u32              |
       +-------------------------------+
+
+      See section 7.
 
 
   KeyEvent (0x8001)
@@ -165,7 +275,7 @@ All integers are little-endian. There is no padding.
       +---------------+---------------+
       |       x       |       y       |
       |      i16      |      i16      |
-      +-------+-------+
+      +-------+-------+---------------+
       |button |pressed|
       |  u8   |  u8   |
       +-------+-------+
@@ -191,13 +301,23 @@ All integers are little-endian. There is no padding.
 
       status: 0 denied, 1 granted, 2 released.
 
-  Stacking order: portals are drawn in the order their clients
-  connected and, inside one client, by ascending portal_id.
-  Rectangles are clipped to the bounds of their portal and to
-  the screen.
+
+--[ 6. COMPOSITION ]------------------------------------------
+
+  Portals are drawn in the order their clients connected and,
+  inside one client, by ascending portal_id. A portal drawn
+  later covers one drawn earlier.
+
+  Inside a portal, the commands of the last Commit (DrawRect,
+  DrawImage and ShowText) are drawn in the order they were
+  sent. Every command is clipped to the bounds of its portal
+  and to the screen.
+
+  Images belong to the client that created them. A client can
+  not refer to the image of another client.
 
 
---[ 5. INPUT, FOCUS AND KEYBOARD GRAB ]-----------------------
+--[ 7. INPUT, FOCUS AND KEYBOARD GRAB ]-----------------------
 
   Focus. At most one portal has keyboard focus. A new portal
   takes focus unless a keyboard grab is held. A pointer button
@@ -230,33 +350,55 @@ All integers are little-endian. There is no padding.
   higher) is disconnected.
 
 
---[ 6. LIMITS ]------------------------------------------------
+--[ 8. LIMITS ]-----------------------------------------------
 
-  Maximum payload size                  1 MiB
-  Maximum clients                          64
-  Maximum portals per client                8
-  Maximum uncommitted rectangles per portal 4096
+  A client must stay inside these limits. A server disconnects
+  a client that goes beyond them.
+
+  Maximum payload size                        1 MiB
+  Maximum clients                                64
+  Maximum portals per client                      8
+  Maximum uncommitted commands per portal      4096
+  Maximum images per client                      32
+  Maximum image memory per client             8 MiB
+  Maximum image width or height                4096
+  Text length                          1 to 256 bytes
+  Text height                          1 to 512 pixels
+  Output backlog per client                  64 KiB
 
 
---[ 7. ERRORS ]------------------------------------------------
+--[ 9. ERRORS ]-----------------------------------------------
 
   The server does not send error messages. A client that
   breaks the protocol is disconnected, and the reason is
   written to the server log. Causes include:
 
       - unknown opcode
-      - payload size different from the one the opcode needs
+      - payload size the opcode does not allow
       - payload larger than the maximum
       - message before Hello, or Hello twice
       - unsupported protocol version
+      - server-only message sent by a client
       - unknown portal id, or portal id already in use
-      - any limit in section 5 exceeded
+      - unknown image id, or image id already in use
+      - unsupported image format
+      - image dimensions out of range
+      - image data outside the bounds of the image
+      - text that is not valid UTF-8
+      - text height out of range
+      - any limit in section 8 exceeded
 
 
---[ 8. PLANNED ]-----------------------------------------------
+--[ 10. PLANNED ]---------------------------------------------
 
-  ShowText, StreamBuffer and server to client Event messages
-  (input, focus, portal closed) are not part of version 0.
+  Not part of version 0:
+
+      - MeasureText, to ask the server for the size of a text
+      - more pixel formats, such as RGB565
+      - PointerMove events
+      - a secure attention key, handled by the server and
+        never sent to clients
+      - MUST/SHOULD wording and byte exact test vectors
 
 
 ==============================================================
