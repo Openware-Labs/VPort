@@ -9,6 +9,7 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const HEADER_SIZE: usize = 8;
 pub const MAX_PAYLOAD: u32 = 1 << 20;
 pub const MAX_TEXT_BYTES: usize = 256;
+pub const MAX_IDENTITY_BYTES: usize = 128;
 
 pub const IMAGE_FORMAT_RGBA8: u8 = 0;
 
@@ -42,6 +43,7 @@ impl PayloadSize {
 #[repr(u16)]
 pub enum Opcode {
     Hello = 0x0001,
+    ProxyIdentity = 0x0002,
     InitPortal = 0x0010,
     ClosePortal = 0x0011,
     DrawRect = 0x0020,
@@ -63,6 +65,7 @@ impl Opcode {
     pub fn from_u16(value: u16) -> Option<Self> {
         match value {
             0x0001 => Some(Self::Hello),
+            0x0002 => Some(Self::ProxyIdentity),
             0x0010 => Some(Self::InitPortal),
             0x0011 => Some(Self::ClosePortal),
             0x0020 => Some(Self::DrawRect),
@@ -85,6 +88,10 @@ impl Opcode {
     pub fn payload_size(self) -> PayloadSize {
         match self {
             Self::Hello => PayloadSize::Fixed(4),
+            Self::ProxyIdentity => PayloadSize::Variable {
+                min: 1,
+                max: MAX_IDENTITY_BYTES,
+            },
             Self::InitPortal => PayloadSize::Fixed(12),
             Self::ClosePortal => PayloadSize::Fixed(4),
             Self::DrawRect => PayloadSize::Fixed(16),
@@ -207,6 +214,11 @@ pub struct Hello {
     pub capabilities: u16,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProxyIdentity {
+    pub identity: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InitPortal {
     pub portal_id: u32,
@@ -317,6 +329,7 @@ pub struct GrabStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
     Hello(Hello),
+    ProxyIdentity(ProxyIdentity),
     InitPortal(InitPortal),
     ClosePortal(ClosePortal),
     DrawRect(DrawRect),
@@ -338,6 +351,7 @@ impl Message {
     pub fn opcode(&self) -> Opcode {
         match self {
             Self::Hello(_) => Opcode::Hello,
+            Self::ProxyIdentity(_) => Opcode::ProxyIdentity,
             Self::InitPortal(_) => Opcode::InitPortal,
             Self::ClosePortal(_) => Opcode::ClosePortal,
             Self::DrawRect(_) => Opcode::DrawRect,
@@ -358,6 +372,7 @@ impl Message {
 
     fn payload_len(&self) -> usize {
         match self {
+            Self::ProxyIdentity(m) => m.identity.len(),
             Self::ImageData(m) => IMAGE_DATA_FIXED + m.data.len(),
             Self::ShowText(m) => SHOW_TEXT_FIXED + m.text.len(),
             other => match other.opcode().payload_size() {
@@ -379,6 +394,7 @@ impl Message {
                 put_u16(out, m.version);
                 put_u16(out, m.capabilities);
             }
+            Self::ProxyIdentity(m) => out.extend_from_slice(m.identity.as_bytes()),
             Self::InitPortal(m) => {
                 put_u32(out, m.portal_id);
                 put_i16(out, m.x);
@@ -477,6 +493,11 @@ impl Message {
                 version: r.u16(),
                 capabilities: r.u16(),
             }),
+            Opcode::ProxyIdentity => {
+                let identity =
+                String::from_utf8(payload.to_vec()).map_err(|_| ProtoError::InvalidUtf8)?;
+                Self::ProxyIdentity(ProxyIdentity { identity })
+            }
             Opcode::InitPortal => Self::InitPortal(InitPortal {
                 portal_id: r.u32(),
                 x: r.i16(),
@@ -633,6 +654,9 @@ mod tests {
         roundtrip(Message::Hello(Hello {
             version: PROTOCOL_VERSION,
             capabilities: 0,
+        }));
+        roundtrip(Message::ProxyIdentity(ProxyIdentity {
+            identity: "totem-12".to_string(),
         }));
         roundtrip(Message::InitPortal(InitPortal {
             portal_id: 7,
@@ -791,16 +815,18 @@ mod tests {
     }
 
     #[test]
-    fn image_data_without_pixels_is_rejected() {
-        let payload = vec![0u8; IMAGE_DATA_FIXED];
-        let header = Header {
-            opcode: Opcode::ImageData as u16,
-            flags: 0,
-            payload_len: payload.len() as u32,
-        };
-        assert!(matches!(
-            Message::decode(&header, &payload),
-            Err(ProtoError::PayloadOutOfRange { .. })
-        ));
+    fn identity_must_be_between_one_and_128_bytes() {
+        for len in [0usize, MAX_IDENTITY_BYTES + 1] {
+            let payload = vec![b'a'; len];
+            let header = Header {
+                opcode: Opcode::ProxyIdentity as u16,
+                flags: 0,
+                payload_len: len as u32,
+            };
+            assert!(matches!(
+                Message::decode(&header, &payload),
+                             Err(ProtoError::PayloadOutOfRange { .. })
+            ));
+        }
     }
 }

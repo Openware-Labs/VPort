@@ -10,8 +10,9 @@
 
 VPort is a minimal graphics protocol for Linux. A client (a
 script, a point-of-sale program, a kiosk application) talks to
-a display server through a Unix domain socket using a small
-binary wire protocol, and the server draws what the client
+a display server through a Unix domain socket or, across the
+network, through an authenticated and encrypted channel, using
+a small binary wire protocol. The server draws what the client
 asks for in an isolated "portal" (viewport).
 
 VPort is the PROTOCOL. It is defined by a specification, and
@@ -31,13 +32,15 @@ controllers and terminal scripts.
 --[ 2. DESIGN GOALS ]-----------------------------------------
 
   Small      The whole graphical stack should fit in less than
-             20 MB of RAM. A typical X11 + Chromium kiosk setup
-             needs between 400 MB and 1 GB per terminal.
+             20 MB of RAM. An X11 + Chromium kiosk setup
+             typically needs 400 MB to 1 GB per terminal.
 
   Isolated   Every client owns its portals and can see nothing
              else. There is no screen scraping and no global
              key grabbing. Clients are identified by the
-             kernel (SO_PEERCRED), not by what they claim.
+             kernel (SO_PEERCRED) on the local socket and by a
+             certificate on the network, never by what they
+             claim.
 
   Resilient  Application logic (client) and rendering (server)
              are strictly separated. The server must be able
@@ -48,59 +51,54 @@ controllers and terminal scripts.
              handful of dependencies, hard limits on
              everything a client can allocate.
 
+  Networked  A server and its clients can run on different
+             machines, over a mutually authenticated and
+             encrypted channel. There is no plaintext network
+             mode.
+
 
 --[ 3. NON-GOALS ]--------------------------------------------
 
   - Running generic desktop applications.
   - Window management, decorations, compositing effects.
-  - Network transparency.
   - Rendering HTML, CSS or any markup.
+  - Entering PINs or card data, which needs certified
+    hardware.
 
 
---[ 4. THE THREE PARTS ]--------------------------------------
+--[ 4. THE PARTS ]--------------------------------------------
 
-  VPort       The protocol. Specified in protocol/PROTOCOL.
-              protocol/vport-proto holds the reference wire
-              definitions in Rust, used by the two programs
-              below. Nothing forces an implementation to use
-              them: the specification is enough.
+  VPort            The protocol. Specified in protocol/PROTOCOL.
+                   protocol/vport-proto holds the reference wire
+                   definitions in Rust, used by the programs below.
+                   Nothing forces an implementation to use them:
+                   the specification is enough.
 
-  libvport    A client library. It connects to a server and
-              exposes calls such as init_portal, draw_rect,
-              show_text and commit. This one is the reference,
-              written in Rust, with a C ABI planned for C,
-              Python and shell bindings. Anyone can write
-              another one.
+  libvport         A client library. It connects to a server and
+                   exposes calls such as init_portal, draw_rect,
+                   show_text and commit. This one is the reference,
+                   written in Rust, with a C ABI planned for C,
+                   Python and shell bindings. Anyone can write
+                   another one.
 
-  vportd      A server. It listens on a Unix socket, validates
-              every message, keeps the state of each portal,
-              presents committed frames and routes input. This
-              one is both the default server and the reference
-              implementation. Anyone can write another one.
+  vportd           A server. It listens on a Unix socket, validates
+                   every message, keeps the state of each portal,
+                   presents committed frames and routes input. This
+                   one is both the default server and the reference
+                   implementation. Anyone can write another one.
 
-  libvport and vportd do not depend on each other. They only
-  share the protocol.
+  vport-gateway    A gateway for network clients. It accepts
+                   TLS 1.3 connections with mutual authentication,
+                   lets in only the identities on an allow list,
+                   and relays each client to vportd through a
+                   socket reserved for gateways. It is optional:
+                   vportd works alone for local use.
 
-
---[ 5. SOURCE TREE ]------------------------------------------
-
-  vport/
-  +-- README
-  +-- LICENSE
-  +-- CREDITS
-  +-- CONTRIBUTING
-  +-- Cargo.toml
-  +-- assets/                 artwork, including the logo
-  +-- protocol/               THE VPORT PROTOCOL
-  |   +-- PROTOCOL            the specification
-  |   +-- vport-proto/        reference wire definitions (Rust)
-  +-- lib/
-  |   +-- libvport/           reference client library
-  +-- programs/
-      +-- vportd/             default and reference server
+  libvport, vportd and vport-gateway do not depend on each
+  other. They only share the protocol.
 
 
---[ 6. BUILDING ]---------------------------------------------
+--[ 5. BUILDING ]---------------------------------------------
 
   A recent stable Rust toolchain is the only requirement.
 
@@ -113,10 +111,13 @@ controllers and terminal scripts.
       $ cargo build --release -p vportd --features sdl2
 
   Text needs a TrueType font on the machine running vportd.
-  DejaVu Sans is found in the usual system paths.
+  It looks under /usr/share/fonts, preferring DejaVu Sans,
+  Noto Sans and Liberation Sans.
+
+  The script util/pki.sh needs openssl.
 
 
---[ 7. RUNNING ]----------------------------------------------
+--[ 6. RUNNING ]----------------------------------------------
 
   The default socket is /run/vport/vport.sock, which needs
   root. For development use a socket in /tmp:
@@ -139,19 +140,97 @@ controllers and terminal scripts.
 
   Optional environment for vportd:
 
-      VPORT_BACKEND    "ppm" or "sdl2" (default: sdl2 when
-                       built with the sdl2 feature, otherwise
-                       ppm)
-      VPORT_PPM        file written by the ppm backend
-                       (default /tmp/vport-frame.ppm)
-      VPORT_SIZE       screen size as WIDTHxHEIGHT
-                       (default 800x480)
-      VPORT_FONT       TrueType font used to draw text
-                       (default: DejaVu Sans or Liberation
-                       Sans from the usual system paths)
-      VPORT_GRAB_UIDS  comma separated uids allowed to grab
-                       the keyboard (default: 0 and the uid
-                       of vportd)
+      VPORT_BACKEND          "ppm" or "sdl2". Default is
+                             sdl2 when built with the
+                             sdl2 feature, else ppm
+      VPORT_PPM              file written by the ppm
+                             backend (default
+                             /tmp/vport-frame.ppm)
+      VPORT_SIZE             screen size as WIDTHxHEIGHT
+                             (default 800x480)
+      VPORT_FONT             TrueType font used to draw
+                             text (default: found under
+                             /usr/share/fonts)
+      VPORT_GRAB_UIDS        comma separated uids allowed
+                             to grab the keyboard (default:
+                             0 and the uid of vportd)
+      VPORT_GRAB_IDENTITIES  comma separated network
+                             identities allowed to grab
+                             the keyboard (default: none)
+      VPORT_GATEWAY_SOCKET   socket reserved for the
+                             gateway (default: none, so no
+                             gateway can connect)
+      VPORT_GATEWAY_UIDS     comma separated uids trusted
+                             as gateway (default: 0 and
+                             the uid of vportd)
+
+
+--[ 7. RUNNING OVER THE NETWORK ]-----------------------------
+
+  Network clients connect to a vport-gateway that runs next
+  to vportd. Create a certificate authority, a certificate
+  for the gateway and one for each client. The Common Name of
+  a client certificate is its identity:
+
+      $ sh util/pki.sh init
+      $ sh util/pki.sh server gateway 127.0.0.1
+      $ sh util/pki.sh client app01
+      $ echo app01 > pki/allow.txt
+
+  Start vportd with a socket reserved for the gateway:
+
+      $ VPORT_SOCKET=/tmp/vport-dev.sock \
+        VPORT_GATEWAY_SOCKET=/tmp/vport-gw.sock \
+        cargo run -p vportd --features sdl2
+
+  and the gateway:
+
+      $ VPORT_GATEWAY_LISTEN=127.0.0.1:7443 \
+        VPORT_GATEWAY_CERT=pki/gateway.crt \
+        VPORT_GATEWAY_KEY=pki/gateway.key \
+        VPORT_GATEWAY_CA=pki/ca.crt \
+        VPORT_GATEWAY_ALLOW=pki/allow.txt \
+        VPORT_GATEWAY_UPSTREAM=/tmp/vport-gw.sock \
+        cargo run -p vport-gateway
+
+  Environment for vport-gateway. All are required except the
+  last one:
+
+      VPORT_GATEWAY_LISTEN    address to listen on. There is
+                              no default: the gateway never
+                              listens unless told to
+      VPORT_GATEWAY_CERT      certificate of the gateway
+      VPORT_GATEWAY_KEY       private key of the gateway,
+                              not readable by group or
+                              others
+      VPORT_GATEWAY_CA        authority that signs the
+                              client certificates
+      VPORT_GATEWAY_ALLOW     file with the allowed
+                              identities, one per line
+      VPORT_GATEWAY_UPSTREAM  gateway socket of vportd
+                              (default
+                              /run/vport/gateway.sock)
+
+  The allow list is read again for every new connection.
+  Network clients cannot grab the keyboard unless their
+  identity is listed in VPORT_GRAB_IDENTITIES.
+
+  libvport does not speak TLS yet. Until it does, a client
+  machine can bridge a local socket to the gateway with
+  socat:
+
+      $ BRIDGE=OPENSSL:127.0.0.1:7443
+      $ BRIDGE=$BRIDGE,cert=pki/app01.crt,key=pki/app01.key
+      $ BRIDGE=$BRIDGE,cafile=pki/ca.crt
+      $ socat UNIX-LISTEN:/tmp/vport-remote.sock,fork $BRIDGE
+
+  and run the demo with VPORT_SOCKET=/tmp/vport-remote.sock.
+  The bridge leaves its socket open to every local process of
+  that machine, so it is only for testing.
+
+  Keep pki/ca.key offline, because whoever has it can create
+  any identity. The pki directory is ignored by git and must
+  never be committed.
 
 
 --[ 8. STATUS ]-----------------------------------------------
@@ -160,12 +239,19 @@ controllers and terminal scripts.
   draft. Working today: wire protocol v0, a server with PPM
   and SDL2 backends, portals with clipped and alpha blended
   rectangles, images and text, keyboard and pointer button
-  input, focus, the exclusive keyboard grab, and the
-  reference client library. Planned next:
+  input, focus, the exclusive keyboard grab, a gateway for
+  network clients over mutually authenticated TLS 1.3, and
+  the reference client library. Planned next:
 
+      - TLS inside libvport
       - formal specification with MUST/SHOULD wording and
         byte exact test vectors
       - conformance tests for servers and client libraries
+      - limits per client address in the gateway
+      - closing a connection when its identity leaves the
+        allow list
+      - fuzzing of the frame parser and an independent
+        security review
       - MeasureText, to measure a text before drawing it
       - more pixel formats, such as RGB565
       - DRM/KMS backend with evdev input and EVIOCGRAB
@@ -178,6 +264,7 @@ controllers and terminal scripts.
 --[ 9. DOCUMENTATION ]----------------------------------------
 
   protocol/PROTOCOL   the VPort specification
+  util/pki.sh         certificate authority and certificates
   CONTRIBUTING        how to send patches
   CREDITS             who made this
   LICENSE             MIT license
@@ -187,7 +274,8 @@ controllers and terminal scripts.
 
   VPort is released under the MIT license. See LICENSE. It
   covers the specification, the reference wire definitions,
-  the reference client library and the reference server.
+  the reference client library, the reference server and the
+  reference gateway.
 
 
 ==============================================================

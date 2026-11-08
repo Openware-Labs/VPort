@@ -18,39 +18,69 @@ use crate::epoll::{peer_cred, Epoll, Event};
 use crate::input::{GrabPolicy, Input};
 
 const LISTENER_TOKEN: u64 = 0;
+const GATEWAY_LISTENER_TOKEN: u64 = 1;
+const FIRST_CLIENT_TOKEN: u64 = 2;
 const MAX_CLIENTS: usize = 64;
 const POLL_INTERVAL_MS: i32 = 16;
 
 pub struct Server {
     listener: UnixListener,
+    gateway_listener: Option<UnixListener>,
+    gateway_uids: Vec<u32>,
     epoll: Epoll,
     clients: BTreeMap<u64, Client>,
     next_token: u64,
-    socket_path: PathBuf,
+    socket_paths: Vec<PathBuf>,
     compositor: Compositor,
     input: Input,
 }
 
-impl Server {
-    pub fn bind(path: &Path, mut compositor: Compositor) -> io::Result<Self> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
+fn bind_socket(path: &Path) -> io::Result<UnixListener> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    if path.exists() {
+        if UnixStream::connect(path).is_ok() {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!("another vportd is already listening on {}", path.display()),
+            ));
         }
-        if path.exists() {
-            if UnixStream::connect(path).is_ok() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AddrInUse,
-                    format!("another vportd is already listening on {}", path.display()),
-                ));
-            }
-            fs::remove_file(path)?;
-        }
-        let listener = UnixListener::bind(path)?;
-        listener.set_nonblocking(true)?;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o660))?;
+        fs::remove_file(path)?;
+    }
+    let listener = UnixListener::bind(path)?;
+    listener.set_nonblocking(true)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o660))?;
+    Ok(listener)
+}
 
+impl Server {
+    pub fn bind(
+        path: &Path,
+        gateway_path: Option<&Path>,
+        gateway_uids: Vec<u32>,
+        mut compositor: Compositor,
+    ) -> io::Result<Self> {
         let epoll = Epoll::new()?;
+        let mut socket_paths = vec![path.to_path_buf()];
+
+        let listener = bind_socket(path)?;
         epoll.add(listener.as_raw_fd(), LISTENER_TOKEN)?;
+
+        let gateway_listener = match gateway_path {
+            Some(gateway_path) => {
+                let gateway_listener = bind_socket(gateway_path)?;
+                epoll.add(gateway_listener.as_raw_fd(), GATEWAY_LISTENER_TOKEN)?;
+                socket_paths.push(gateway_path.to_path_buf());
+                eprintln!(
+                    "vportd: gateway socket on {}, trusted gateway uids {:?}",
+                    gateway_path.display(),
+                          gateway_uids
+                );
+                Some(gateway_listener)
+            }
+            None => None,
+        };
 
         compositor.render(std::iter::empty())?;
 
@@ -60,12 +90,14 @@ impl Server {
 
         Ok(Self {
             listener,
+            gateway_listener,
+            gateway_uids,
             epoll,
             clients: BTreeMap::new(),
-            next_token: LISTENER_TOKEN + 1,
-            socket_path: path.to_path_buf(),
-            compositor,
-            input,
+           next_token: FIRST_CLIENT_TOKEN,
+           socket_paths,
+           compositor,
+           input,
         })
     }
 
@@ -82,10 +114,10 @@ impl Server {
 
             let mut changed = false;
             for event in events.drain(..) {
-                if event.token == LISTENER_TOKEN {
-                    self.accept_all();
-                } else {
-                    changed |= self.service_client(event);
+                match event.token {
+                    LISTENER_TOKEN => self.accept_all(false),
+                    GATEWAY_LISTENER_TOKEN => self.accept_all(true),
+                    _ => changed |= self.service_client(event),
                 }
             }
 
@@ -104,14 +136,16 @@ impl Server {
                         pressed,
                         repeat,
                     } => self
-                        .input
-                        .key(&mut self.clients, scancode, modifiers, pressed, repeat),
+                    .input
+                    .key(&mut self.clients, scancode, modifiers, pressed, repeat),
                     BackendEvent::Button {
                         x,
                         y,
                         button,
                         pressed,
-                    } => self.input.button(&mut self.clients, x, y, button, pressed),
+                    } => self
+                    .input
+                    .button(&mut self.clients, x, y, button, pressed),
                 }
             }
 
@@ -125,10 +159,18 @@ impl Server {
         }
     }
 
-    fn accept_all(&mut self) {
+    fn accept_all(&mut self, via_gateway: bool) {
         loop {
-            match self.listener.accept() {
-                Ok((stream, _)) => self.register(stream),
+            let result = if via_gateway {
+                match &self.gateway_listener {
+                    Some(listener) => listener.accept(),
+                    None => return,
+                }
+            } else {
+                self.listener.accept()
+            };
+            match result {
+                Ok((stream, _)) => self.register(stream, via_gateway),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => return,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => {
@@ -139,7 +181,7 @@ impl Server {
         }
     }
 
-    fn register(&mut self, stream: UnixStream) {
+    fn register(&mut self, stream: UnixStream, via_gateway: bool) {
         if self.clients.len() >= MAX_CLIENTS {
             eprintln!("vportd: client limit reached, connection refused");
             return;
@@ -154,6 +196,13 @@ impl Server {
                 return;
             }
         };
+        if via_gateway && !self.gateway_uids.contains(&peer.uid) {
+            eprintln!(
+                "vportd: gateway connection refused for uid {}, not a trusted gateway",
+                peer.uid
+            );
+            return;
+        }
         let token = self.next_token;
         self.next_token += 1;
         if let Err(e) = self.epoll.add(stream.as_raw_fd(), token) {
@@ -161,10 +210,14 @@ impl Server {
             return;
         }
         eprintln!(
-            "vportd: client connected (pid {}, uid {}, gid {})",
-            peer.pid, peer.uid, peer.gid
+            "vportd: client connected (pid {}, uid {}, gid {}{})",
+                  peer.pid,
+                  peer.uid,
+                  peer.gid,
+                  if via_gateway { ", via gateway" } else { "" }
         );
-        self.clients.insert(token, Client::new(stream, peer));
+        self.clients
+        .insert(token, Client::new(stream, peer, via_gateway));
     }
 
     fn service_client(&mut self, event: Event) -> bool {
@@ -188,15 +241,15 @@ impl Server {
                 }
                 (
                     open && !event.hangup,
-                    client.take_dirty(),
-                    client.take_requests(),
+                 client.take_dirty(),
+                 client.take_requests(),
                 )
             }
             None => return false,
         };
         for request in requests {
             self.input
-                .handle_request(event.token, request, &mut self.clients);
+            .handle_request(event.token, request, &mut self.clients);
         }
         if !keep {
             dirty |= self.drop_client(event.token);
@@ -208,7 +261,11 @@ impl Server {
         match self.clients.remove(&token) {
             Some(client) => {
                 let _ = self.epoll.remove(client.raw_fd());
-                eprintln!("vportd: client disconnected (pid {})", client.peer().pid);
+                eprintln!(
+                    "vportd: client disconnected (pid {}, {})",
+                          client.peer().pid,
+                          client.identity()
+                );
                 let had_portals = client.has_portals();
                 self.input.client_gone(token, &mut self.clients);
                 had_portals
@@ -221,11 +278,11 @@ impl Server {
         let mut dirty = false;
         loop {
             let doomed: Vec<u64> = self
-                .clients
-                .iter()
-                .filter(|(_, client)| client.is_doomed())
-                .map(|(token, _)| *token)
-                .collect();
+            .clients
+            .iter()
+            .filter(|(_, client)| client.is_doomed())
+            .map(|(token, _)| *token)
+            .collect();
             if doomed.is_empty() {
                 break;
             }
@@ -237,12 +294,12 @@ impl Server {
             let wanted = client.wants_write();
             if wanted != client.write_armed()
                 && self
-                    .epoll
-                    .set_writable(client.raw_fd(), *token, wanted)
-                    .is_ok()
-            {
-                client.set_write_armed(wanted);
-            }
+                .epoll
+                .set_writable(client.raw_fd(), *token, wanted)
+                .is_ok()
+                {
+                    client.set_write_armed(wanted);
+                }
         }
         dirty
     }
@@ -263,6 +320,8 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.socket_path);
+        for path in &self.socket_paths {
+            let _ = fs::remove_file(path);
+        }
     }
 }

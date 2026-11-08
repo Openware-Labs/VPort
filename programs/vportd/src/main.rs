@@ -8,6 +8,7 @@ mod client;
 mod compositor;
 mod epoll;
 mod framebuffer;
+mod identity;
 mod image;
 mod input;
 mod portal;
@@ -40,30 +41,38 @@ fn parse_size(text: &str) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
+fn gateway_uids() -> Vec<u32> {
+    match std::env::var("VPORT_GATEWAY_UIDS") {
+        Ok(text) => text
+        .split(',')
+        .filter_map(|part| part.trim().parse().ok())
+        .collect(),
+        Err(_) => vec![0, unsafe { libc::geteuid() }],
+    }
+}
+
 fn build_backend(width: u32, height: u32) -> Result<Box<dyn Backend>, String> {
     let name = std::env::var("VPORT_BACKEND").unwrap_or_else(|_| DEFAULT_BACKEND.to_string());
     match name.as_str() {
         "ppm" => {
             let path = std::env::var("VPORT_PPM").unwrap_or_else(|_| DEFAULT_PPM.to_string());
-            Ok(Box::new(PpmBackend::new(
-                PathBuf::from(path),
-                width,
-                height,
-            )))
+            Ok(Box::new(PpmBackend::new(PathBuf::from(path), width, height)))
         }
         #[cfg(feature = "sdl2")]
         "sdl2" => backend::SdlBackend::new(width, height)
-            .map(|sdl| Box::new(sdl) as Box<dyn Backend>)
-            .map_err(|err| format!("could not start the SDL2 backend: {err}")),
+        .map(|sdl| Box::new(sdl) as Box<dyn Backend>)
+        .map_err(|err| format!("could not start the SDL2 backend: {err}")),
         other => Err(format!("unknown or unavailable backend: {other}")),
     }
 }
 
 fn main() -> ExitCode {
     let socket = std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("VPORT_SOCKET").ok())
-        .unwrap_or_else(|| DEFAULT_SOCKET.to_string());
+    .nth(1)
+    .or_else(|| std::env::var("VPORT_SOCKET").ok())
+    .unwrap_or_else(|| DEFAULT_SOCKET.to_string());
+
+    let gateway_socket = std::env::var("VPORT_GATEWAY_SOCKET").ok().map(PathBuf::from);
 
     let (width, height) = match std::env::var("VPORT_SIZE") {
         Ok(text) => match parse_size(&text) {
@@ -86,8 +95,13 @@ fn main() -> ExitCode {
 
     let compositor = Compositor::new(backend);
 
-    let result = server::Server::bind(&PathBuf::from(&socket), compositor)
-        .and_then(|mut server| server.run());
+    let result = server::Server::bind(
+        &PathBuf::from(&socket),
+                                      gateway_socket.as_deref(),
+                                      gateway_uids(),
+                                      compositor,
+    )
+    .and_then(|mut server| server.run());
 
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -13,6 +13,7 @@ use vport_proto::{
 };
 
 use crate::epoll::PeerCred;
+use crate::identity::{valid_remote_name, Identity};
 use crate::image::Image;
 use crate::portal::{Command, Portal, Scene, MAX_PENDING_COMMANDS};
 
@@ -36,6 +37,9 @@ pub enum Request {
 pub struct Client {
     stream: UnixStream,
     peer: PeerCred,
+    identity: Identity,
+    via_gateway: bool,
+    identified: bool,
     inbuf: Vec<u8>,
     outbuf: Vec<u8>,
     greeted: bool,
@@ -49,25 +53,32 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(stream: UnixStream, peer: PeerCred) -> Self {
-        Self {
-            stream,
-            peer,
-            inbuf: Vec::with_capacity(READ_CHUNK),
-            outbuf: Vec::with_capacity(64),
-            greeted: false,
-            portals: BTreeMap::new(),
-            images: BTreeMap::new(),
-            image_bytes: 0,
-            dirty: false,
-            doomed: false,
-            write_armed: false,
-            requests: Vec::new(),
-        }
+    pub fn new(stream: UnixStream, peer: PeerCred, via_gateway: bool) -> Self {
+    Self {
+        stream,
+        peer,
+        identity: Identity::Local { uid: peer.uid },
+        via_gateway,
+        identified: false,
+        inbuf: Vec::new(),
+        outbuf: Vec::new(),
+        greeted: false,
+        portals: BTreeMap::new(),
+        images: BTreeMap::new(),
+        image_bytes: 0,
+        dirty: false,
+        doomed: false,
+        write_armed: false,
+        requests: Vec::new(),
     }
+}
 
     pub fn peer(&self) -> PeerCred {
         self.peer
+    }
+
+    pub fn identity(&self) -> &Identity {
+        &self.identity
     }
 
     pub fn raw_fd(&self) -> RawFd {
@@ -196,6 +207,9 @@ impl Client {
                 if self.greeted {
                     return Err(violation("duplicate Hello"));
                 }
+                if self.via_gateway && !self.identified {
+                    return Err(violation("gateway connection without an identity"));
+                }
                 if hello.version != PROTOCOL_VERSION {
                     return Err(violation("unsupported protocol version"));
                 }
@@ -204,6 +218,22 @@ impl Client {
                     version: PROTOCOL_VERSION,
                     capabilities: 0,
                 }))
+            }
+            Message::ProxyIdentity(proxy) => {
+                if !self.via_gateway {
+                    return Err(violation("identity assertion on a local connection"));
+                }
+                if self.greeted || self.identified {
+                    return Err(violation("identity assertion out of order"));
+                }
+                if !valid_remote_name(&proxy.identity) {
+                    return Err(violation("invalid identity"));
+                }
+                self.identity = Identity::Remote {
+                    name: proxy.identity,
+                };
+                self.identified = true;
+                Ok(())
             }
             _ if !self.greeted => Err(violation("Hello required before any other message")),
             Message::InitPortal(init) => {

@@ -47,8 +47,8 @@ fn render_logo() -> (u16, u16, Vec<u8>) {
 fn draw_scene(conn: &mut Connection, code: &str) -> std::io::Result<()> {
     conn.draw_rect(PORTAL, 0, 0, 640, 360, 0x202020ff)?;
     conn.draw_image(PORTAL, LOGO, 20, 20)?;
-    conn.show_text(PORTAL, 20, 140, 28, 0xb0b0b0ff, "Arroz tipo 1 5kg")?;
-    conn.show_text(PORTAL, 20, 180, 80, 0xffffffff, "R$ 12,90")?;
+    conn.show_text(PORTAL, 20, 140, 28, 0xb0b0b0ff, "VPORT DEMO")?;
+    conn.show_text(PORTAL, 20, 180, 80, 0xffffffff, "INSERT CODE")?;
     conn.show_text(PORTAL, 20, 300, 24, 0x8a8a8aff, &format!("Code: {code}"))?;
     conn.draw_rect(
         PORTAL,

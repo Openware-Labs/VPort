@@ -5,20 +5,29 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use fontdue::{Font, FontSettings, Metrics};
 
 use crate::framebuffer::{Framebuffer, Rect};
 
 const MAX_CACHE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_SCAN_DEPTH: usize = 6;
+const MAX_SCANNED_FILES: usize = 4096;
 
-const DEFAULT_FONT_PATHS: [&str; 6] = [
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-    "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+const FONT_ROOTS: [&str; 3] = [
+    "/usr/share/fonts",
+"/usr/local/share/fonts",
+"/usr/share/X11/fonts",
+];
+
+const PREFERRED_FONTS: [&str; 6] = [
+    "DejaVuSans.ttf",
+"NotoSans-Regular.ttf",
+"LiberationSans-Regular.ttf",
+"Roboto-Regular.ttf",
+"OpenSans-Regular.ttf",
+"Arial.ttf",
 ];
 
 struct Glyph {
@@ -57,9 +66,9 @@ impl TextRenderer {
         };
         let size = height as f32;
         let ascent = font
-            .horizontal_line_metrics(size)
-            .map(|metrics| metrics.ascent)
-            .unwrap_or(size * 0.8);
+        .horizontal_line_metrics(size)
+        .map(|metrics| metrics.ascent)
+        .unwrap_or(size * 0.8);
         let baseline = y + ascent.round() as i32;
         let color_alpha = rgba & 0xff;
         let rgb = (rgba >> 8) & 0x00ff_ffff;
@@ -89,7 +98,13 @@ impl TextRenderer {
                         continue;
                     }
                     let alpha = coverage * color_alpha / 255;
-                    framebuffer.blend_pixel(left + col as i32, top + row as i32, rgb, alpha, clip);
+                    framebuffer.blend_pixel(
+                        left + col as i32,
+                        top + row as i32,
+                        rgb,
+                        alpha,
+                        clip,
+                    );
                 }
             }
             pen += glyph.metrics.advance_width;
@@ -97,24 +112,66 @@ impl TextRenderer {
     }
 }
 
-fn load_font() -> Option<Font> {
-    let mut candidates: Vec<String> = Vec::new();
-    if let Ok(path) = std::env::var("VPORT_FONT") {
-        candidates.push(path);
+fn collect_fonts(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+    if depth > MAX_SCAN_DEPTH || found.len() >= MAX_SCANNED_FILES {
+        return;
     }
-    candidates.extend(DEFAULT_FONT_PATHS.iter().map(|path| path.to_string()));
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_fonts(&path, depth + 1, found);
+        } else if path
+            .extension()
+            .map_or(false, |extension| extension.eq_ignore_ascii_case("ttf"))
+            {
+                found.push(path);
+            }
+    }
+}
 
-    for path in candidates {
+fn font_candidates() -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(path) = std::env::var("VPORT_FONT") {
+        candidates.push(PathBuf::from(path));
+    }
+
+    let mut scanned: Vec<PathBuf> = Vec::new();
+    for root in FONT_ROOTS {
+        collect_fonts(Path::new(root), 0, &mut scanned);
+    }
+    scanned.sort();
+
+    for name in PREFERRED_FONTS {
+        let position = scanned
+        .iter()
+        .position(|path| path.file_name().map_or(false, |file| file == name));
+        if let Some(position) = position {
+            candidates.push(scanned.remove(position));
+        }
+    }
+    candidates.extend(scanned);
+    candidates
+}
+
+fn load_font() -> Option<Font> {
+    for path in font_candidates() {
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
-            Err(_) => continue,
+            Err(e) => {
+                eprintln!("vportd: could not read font {}: {e}", path.display());
+                continue;
+            }
         };
         match Font::from_bytes(bytes, FontSettings::default()) {
             Ok(font) => {
-                eprintln!("vportd: font loaded from {path}");
+                eprintln!("vportd: font loaded from {}", path.display());
                 return Some(font);
             }
-            Err(e) => eprintln!("vportd: could not parse font {path}: {e}"),
+            Err(e) => eprintln!("vportd: could not parse font {}: {e}", path.display()),
         }
     }
     eprintln!("vportd: no font found, text will not be drawn (set VPORT_FONT)");

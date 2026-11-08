@@ -18,10 +18,11 @@
 --[ 2. OVERVIEW ]---------------------------------------------
 
   A client talks to a server (for example vportd) over a Unix
-  domain socket (SOCK_STREAM). Messages flow as a continuous
-  byte stream; each message is one frame made of an 8 byte
-  header followed by a payload. The size of the payload is
-  fixed by the opcode, or limited to a range by it.
+  domain socket (SOCK_STREAM) or, across the network, over
+  TLS (section 8). Messages flow as a continuous byte stream;
+  each message is one frame made of an 8 byte header followed
+  by a payload. The size of the payload is fixed by the
+  opcode, or limited to a range by it.
 
   All integers are little-endian. There is no padding.
 
@@ -43,18 +44,21 @@
 
 --[ 4. SESSION ]----------------------------------------------
 
-  1. The client connects to the socket.
+  1. The client connects to the server. On the Unix socket
+     this is a plain connection; on the network it is a TLS
+     connection (section 8).
   2. The client sends Hello with the version it speaks.
   3. The server answers Hello with the version it accepts.
   4. The client may then create portals and images, and draw.
 
-  Any message sent before Hello is a protocol violation. A
-  second Hello is a protocol violation. A version mismatch
+  Any message sent before Hello is a protocol violation,
+  except ProxyIdentity on a gateway connection (section 8).
+  A second Hello is a protocol violation. A version mismatch
   closes the connection.
 
   The server reads the credentials of the peer (pid, uid, gid)
-  from the kernel when the connection is accepted. These are
-  never taken from the protocol.
+  from the kernel when a connection is accepted on a Unix
+  socket. These are never taken from the protocol.
 
 
 --[ 5. MESSAGES ]---------------------------------------------
@@ -62,6 +66,7 @@
   Opcode  Name             Direction          Payload size
   ------  ---------------  -----------------  ------------
   0x0001  Hello            both                4
+  0x0002  ProxyIdentity    client -> server    1 to 128
   0x0010  InitPortal       client -> server   12
   0x0011  ClosePortal      client -> server    4
   0x0020  DrawRect         client -> server   16
@@ -90,6 +95,18 @@
 
       version       protocol version, currently 1.
       capabilities  reserved, must be 0.
+
+
+  ProxyIdentity (0x0002)
+
+      +-------------------------------+
+      | identity, 1 to 128 bytes      |
+      +-------------------------------+
+
+      Sent only by a gateway, as the first message on its
+      connection and before Hello. identity is printable ASCII
+      without spaces: the Common Name of the client
+      certificate. See section 8.
 
 
   InitPortal (0x0010)
@@ -324,7 +341,8 @@
   press inside a portal gives it focus, unless a grab is held.
   When the focused portal goes away, the topmost remaining
   portal takes focus. The old and the new owner are told with
-  FocusChanged.
+  FocusChanged. A client that is denied the grab still gets
+  the keyboard events of a portal that has focus.
 
   Pointer events. PointerButton goes to the topmost portal
   under the pointer. A keyboard grab does not affect it.
@@ -333,11 +351,13 @@
   with GrabKeyboard and the server answers with GrabStatus.
   The rules are strict:
 
-    - The uid of the peer, read from the kernel with
-      SO_PEERCRED, must be in the grab policy. By default the
-      policy is uid 0 and the uid vportd runs as. The
-      environment variable VPORT_GRAB_UIDS (comma separated
-      uids) replaces that list.
+    - The identity of the client (section 8) must be in the
+      grab policy of the server. A local client is checked by
+      uid, a network client by identity. By default the
+      policy lets in uid 0 and the uid the server runs as,
+      and no network identity at all. The reference server
+      reads the lists from VPORT_GRAB_UIDS and
+      VPORT_GRAB_IDENTITIES.
     - Only one grab exists at a time. A second request is
       denied; a grab is never taken away from its holder.
 
@@ -350,12 +370,75 @@
   higher) is disconnected.
 
 
---[ 8. LIMITS ]-----------------------------------------------
+--[ 8. TRANSPORTS AND IDENTITY ]------------------------------
+
+  The words MUST, MUST NOT, SHOULD and MAY in this section
+  are used as in RFC 2119.
+
+  A server MUST know who each client is. The identity of a
+  client comes from the transport, never from the client.
+
+  Local transport. The Unix domain socket. The identity is
+  the uid of the peer, read from the kernel with SO_PEERCRED.
+
+  Network transport. TCP carrying TLS, and inside it the
+  protocol exactly as on the Unix socket.
+
+    - A network transport MUST use TLS 1.3 or newer. There
+      is no plaintext network transport and none may be
+      defined.
+    - Both sides MUST authenticate with certificates. A
+      server MUST refuse a client without a valid
+      certificate, and a client MUST refuse a server without
+      a valid one. The certificates MUST be issued by a
+      certificate authority that the operator controls.
+    - The identity of a network client is the Common Name of
+      its certificate.
+    - Early data (0-RTT) MUST NOT be accepted.
+    - A server MUST NOT read any VPort frame before the TLS
+      handshake has finished and the client has been
+      accepted.
+    - A server MUST apply a deadline to the handshake and
+      SHOULD limit the number of handshakes in progress.
+    - An implementation MUST detect a peer that has vanished
+      and close the connection, so that its portals and its
+      keyboard grab are released.
+    - By default a server MUST NOT listen on the network.
+
+  Gateways. A server MAY delegate the network transport to a
+  gateway, a separate process that terminates TLS, accepts
+  only allowed identities, and relays the stream to the
+  server over a Unix socket reserved for it. The gateway
+  tells the server who the client is with ProxyIdentity,
+  which MUST be the first message on the connection and MUST
+  NOT be sent twice.
+
+    - A server MUST accept ProxyIdentity only on the socket
+      reserved for gateways, and only from a peer whose uid
+      it has been configured to trust.
+    - ProxyIdentity on any other connection is a protocol
+      violation.
+    - A connection on the gateway socket that does not begin
+      with ProxyIdentity MUST be closed.
+
+  Authorization. Authentication says who a client is. What it
+  may do is a separate decision, and the default is to deny.
+  For the keyboard grab, a server MUST check the identity
+  against its grab policy: a local client by uid, a network
+  client by identity. A network client MUST NOT be granted
+  anything because of the uid of a gateway.
+
+  Scope. VPort MUST NOT be used to enter PINs or card data.
+  That needs certified hardware.
+
+
+--[ 9. LIMITS ]-----------------------------------------------
 
   A client must stay inside these limits. A server disconnects
   a client that goes beyond them.
 
   Maximum payload size                        1 MiB
+  Identity length                      1 to 128 bytes
   Maximum clients                                64
   Maximum portals per client                      8
   Maximum uncommitted commands per portal      4096
@@ -367,7 +450,7 @@
   Output backlog per client                  64 KiB
 
 
---[ 9. ERRORS ]-----------------------------------------------
+--[ 10. ERRORS ]----------------------------------------------
 
   The server does not send error messages. A client that
   breaks the protocol is disconnected, and the reason is
@@ -377,6 +460,10 @@
       - payload size the opcode does not allow
       - payload larger than the maximum
       - message before Hello, or Hello twice
+      - identity message on a local connection, sent twice,
+        sent after Hello, or with an invalid identity
+      - gateway connection that does not begin with an
+        identity
       - unsupported protocol version
       - server-only message sent by a client
       - unknown portal id, or portal id already in use
@@ -386,10 +473,10 @@
       - image data outside the bounds of the image
       - text that is not valid UTF-8
       - text height out of range
-      - any limit in section 8 exceeded
+      - any limit in section 9 exceeded
 
 
---[ 10. PLANNED ]---------------------------------------------
+--[ 11. PLANNED ]---------------------------------------------
 
   Not part of version 0:
 
@@ -398,7 +485,10 @@
       - PointerMove events
       - a secure attention key, handled by the server and
         never sent to clients
-      - MUST/SHOULD wording and byte exact test vectors
+      - closing a network connection when its identity is
+        removed from the allow list
+      - MUST/SHOULD wording for sections 1 to 7, and byte
+        exact test vectors
 
 
 ==============================================================

@@ -1,0 +1,10 @@
+[package]
+name = "vport-gateway"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vport-proto = { path = "../../protocol/vport-proto" }
+libc = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+x509-parser = "0.16"
