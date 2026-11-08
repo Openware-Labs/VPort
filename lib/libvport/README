@@ -22,7 +22,8 @@
 
 --[ EXAMPLE ]-------------------------------------------------
 
-  use libvport::Connection;
+
+  use libvport::{Connection, Event};
 
   fn main() -> std::io::Result<()> {
       let mut conn = Connection::connect_default()?;
@@ -30,8 +31,11 @@
       conn.draw_rect(1, 0, 0, 640, 360, 0x202020ff)?;
       conn.show_text(1, 20, 20, 48, 0xffffffff, "Hello")?;
       conn.commit(1)?;
-      conn.wait_event()?;
-      Ok(())
+      loop {
+          if let Event::PointerButton(_) = conn.wait_event()? {
+              return Ok(());
+          }
+      }
   }
 
   connect_default reads the socket path from VPORT_SOCKET and
