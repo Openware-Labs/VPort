@@ -22,6 +22,7 @@ const GATEWAY_LISTENER_TOKEN: u64 = 1;
 const FIRST_CLIENT_TOKEN: u64 = 2;
 const MAX_CLIENTS: usize = 64;
 const POLL_INTERVAL_MS: i32 = 16;
+const IDLE_TIMEOUT_MS: i32 = 1000;
 
 pub struct Server {
     listener: UnixListener,
@@ -105,10 +106,14 @@ impl Server {
         let mut events: Vec<Event> = Vec::with_capacity(64);
         let mut backend_events: Vec<BackendEvent> = Vec::with_capacity(8);
         loop {
+            if crate::signals::requested() {
+                eprintln!("vportd: shutting down");
+                return Ok(());
+            }
             let timeout = if self.compositor.needs_polling() {
                 POLL_INTERVAL_MS
             } else {
-                -1
+                IDLE_TIMEOUT_MS
             };
             self.epoll.wait(&mut events, timeout)?;
 

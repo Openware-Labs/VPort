@@ -110,6 +110,11 @@ controllers and terminal scripts.
 
       $ cargo build --release -p vportd --features sdl2
 
+  The KMS backend draws straight to the screen from a Linux
+  virtual console and needs no extra package:
+
+      $ cargo build --release -p vportd --features kms
+
   Text needs a TrueType font on the machine running vportd.
   It looks under /usr/share/fonts, preferring DejaVu Sans,
   Noto Sans and Liberation Sans.
@@ -163,6 +168,15 @@ controllers and terminal scripts.
       VPORT_GATEWAY_UIDS     comma separated uids trusted
                              as gateway (default: 0 and
                              the uid of vportd)
+      VPORT_DRM_DEVICE       graphics device used by the kms
+                             backend (default: the first
+                             /dev/dri/card* with a connected
+                             display)
+      VPORT_EVDEV_GRAB       "1" makes the kms backend take
+                             the keyboards exclusively, so
+                             that nothing else on the machine
+                             receives their keys (default: 0).
+                             Ctrl+Alt+Backspace stops vportd
 
 
 --[ 7. RUNNING OVER THE NETWORK ]-----------------------------

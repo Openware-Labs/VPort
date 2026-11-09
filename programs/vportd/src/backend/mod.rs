@@ -3,14 +3,22 @@
 // Copyright 2026-present (C) Openware Labs
 // Code Author(s): Openware Labs developers
 
+#[cfg(feature = "kms")]
+mod evdev;
+#[cfg(feature = "kms")]
+mod kms;
 mod ppm;
 #[cfg(feature = "sdl2")]
 mod sdl;
+#[cfg(feature = "kms")]
+mod sys;
 
 use std::io;
 
 use crate::framebuffer::Framebuffer;
 
+#[cfg(feature = "kms")]
+pub use kms::KmsBackend;
 pub use ppm::PpmBackend;
 #[cfg(feature = "sdl2")]
 pub use sdl::SdlBackend;

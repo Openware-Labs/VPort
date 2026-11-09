@@ -13,6 +13,7 @@ mod image;
 mod input;
 mod portal;
 mod server;
+mod signals;
 mod text;
 
 use std::path::PathBuf;
@@ -66,11 +67,24 @@ fn build_backend(width: u32, height: u32) -> Result<Box<dyn Backend>, String> {
         "sdl2" => backend::SdlBackend::new(width, height)
             .map(|sdl| Box::new(sdl) as Box<dyn Backend>)
             .map_err(|err| format!("could not start the SDL2 backend: {err}")),
+        #[cfg(feature = "kms")]
+        "kms" => {
+            let grab_input = std::env::var("VPORT_EVDEV_GRAB").map_or(false, |value| value == "1");
+            let backend = match std::env::var("VPORT_DRM_DEVICE") {
+                Ok(device) => backend::KmsBackend::new(&device, grab_input),
+                Err(_) => backend::KmsBackend::auto(grab_input),
+            };
+            backend
+                .map(|kms| Box::new(kms) as Box<dyn Backend>)
+                .map_err(|err| format!("could not start the KMS backend: {err}"))
+        }
         other => Err(format!("unknown or unavailable backend: {other}")),
     }
 }
 
 fn main() -> ExitCode {
+    signals::install();
+
     let socket = std::env::args()
         .nth(1)
         .or_else(|| std::env::var("VPORT_SOCKET").ok())

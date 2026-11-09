@@ -6,6 +6,7 @@ edition.workspace = true
 [features]
 default = []
 sdl2 = ["dep:sdl2"]
+kms = []
 
 [dependencies]
 vport-proto = { path = "../../protocol/vport-proto" }
