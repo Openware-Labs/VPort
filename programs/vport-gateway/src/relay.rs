@@ -1,3 +1,8 @@
+// VPort — VPort gateway
+// SPDX-License-Identifier: MIT
+// Copyright 2026-present (C) Openware Labs
+// Code Author(s): Openware Labs developers
+
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::os::fd::AsRawFd;
